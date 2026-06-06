@@ -104,19 +104,33 @@ export SEND_DISCORD=false
 export DISCORD_WEBHOOK_URL=your_discord_webhook_url
 ```
 
-On Windows, store the webhook once:
+On Windows, store the webhook once for the same user account that will run the scheduled task:
 
 ```powershell
 setx DISCORD_WEBHOOK_URL "your_discord_webhook_url"
 ```
 
-Then Task Scheduler can run:
+Close and reopen PowerShell after `setx`, then test:
 
 ```powershell
 cd C:\path\to\mlb_props
 $env:DATA_MODE="live"
 $env:SEND_DISCORD="true"
 python run_hot_hits.py
+```
+
+For Task Scheduler, edit `scripts\run_hot_hits_task.cmd` if your repo is not at `C:\bots\mlb_props`.
+Then create the task with:
+
+- Program/script: `C:\bots\mlb_props\scripts\run_hot_hits_task.cmd`
+- Start in: `C:\bots\mlb_props`
+- Run whether user is logged on or not: enabled if you want it fully unattended
+- Run with highest privileges: enabled
+
+The task wrapper writes diagnostics to:
+
+```text
+C:\bots\mlb_props\logs\hot_hits_task.log
 ```
 
 Run live mode:
