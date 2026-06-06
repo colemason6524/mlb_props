@@ -122,7 +122,8 @@ python run_hot_hits.py
 For Task Scheduler, edit `scripts\run_hot_hits_task.cmd` if your repo is not at `C:\bots\mlb_props`.
 Then create the task with:
 
-- Program/script: `C:\bots\mlb_props\scripts\run_hot_hits_task.cmd`
+- Program/script: `C:\Windows\System32\cmd.exe`
+- Add arguments: `/c ""C:\bots\mlb_props\scripts\run_hot_hits_task.cmd""`
 - Start in: `C:\bots\mlb_props`
 - Run whether user is logged on or not: enabled if you want it fully unattended
 - Run with highest privileges: enabled
@@ -130,6 +131,7 @@ Then create the task with:
 The task wrapper writes diagnostics to:
 
 ```text
+C:\bots\mlb_props\logs\hot_hits_cmd_bootstrap.log
 C:\bots\mlb_props\logs\hot_hits_task.log
 ```
 
