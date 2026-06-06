@@ -1,5 +1,5 @@
 param(
-    [string]$ProjectDir = "C:\bots\mlb_props",
+    [string]$ProjectDir = "C:\Users\muski\mlb_props",
     [string]$PythonExe = "python",
     [string]$DisplayLimit = "8",
     [string]$DiscordMinScore = "10"

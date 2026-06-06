@@ -119,20 +119,26 @@ $env:SEND_DISCORD="true"
 python run_hot_hits.py
 ```
 
-For Task Scheduler, edit `scripts\run_hot_hits_task.cmd` if your repo is not at `C:\bots\mlb_props`.
+For Task Scheduler, edit `scripts\run_hot_hits_task.cmd` if your repo is not at `C:\Users\muski\mlb_props`.
 Then create the task with:
 
 - Program/script: `C:\Windows\System32\cmd.exe`
-- Add arguments: `/c ""C:\bots\mlb_props\scripts\run_hot_hits_task.cmd""`
-- Start in: `C:\bots\mlb_props`
+- Add arguments: `/c ""C:\Users\muski\mlb_props\scripts\run_hot_hits_task.cmd""`
+- Start in: `C:\Users\muski\mlb_props`
 - Run whether user is logged on or not: enabled if you want it fully unattended
 - Run with highest privileges: enabled
+
+Before using Task Scheduler, test the exact command manually:
+
+```powershell
+C:\Windows\System32\cmd.exe /c ""C:\Users\muski\mlb_props\scripts\run_hot_hits_task.cmd""
+```
 
 The task wrapper writes diagnostics to:
 
 ```text
-C:\bots\mlb_props\logs\hot_hits_cmd_bootstrap.log
-C:\bots\mlb_props\logs\hot_hits_task.log
+C:\Users\muski\mlb_props\logs\hot_hits_cmd_bootstrap.log
+C:\Users\muski\mlb_props\logs\hot_hits_task.log
 ```
 
 Run live mode:

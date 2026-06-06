@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "PROJECT_DIR=C:\bots\mlb_props"
+set "PROJECT_DIR=C:\Users\muski\mlb_props"
 set "PYTHON_EXE=python"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "LOG_DIR=%PROJECT_DIR%\logs"
