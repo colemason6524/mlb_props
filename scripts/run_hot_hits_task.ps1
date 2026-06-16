@@ -2,7 +2,8 @@ param(
     [string]$ProjectDir = "C:\Users\muski\mlb_props",
     [string]$PythonExe = "python",
     [string]$DisplayLimit = "8",
-    [string]$DiscordMinScore = "10"
+    [string]$DiscordMinScore = "10",
+    [switch]$ExportHistory
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,6 +33,7 @@ try {
     $env:SEND_DISCORD = "true"
     $env:DISPLAY_LIMIT = $DisplayLimit
     $env:HOT_HITS_DISCORD_MIN_SCORE = $DiscordMinScore
+    $env:EXPORT_HISTORY = if ($ExportHistory) { "true" } else { "false" }
 
     if ([string]::IsNullOrWhiteSpace($env:DISCORD_WEBHOOK_URL)) {
         throw "DISCORD_WEBHOOK_URL is not available to this scheduled task user"
@@ -40,6 +42,7 @@ try {
     Write-TaskLog "Python version:"
     & $PythonExe --version *>> $LogPath
 
+    Write-TaskLog "ExportHistory: $env:EXPORT_HISTORY"
     Write-TaskLog "Running hot hits"
     & $PythonExe run_hot_hits.py *>> $LogPath
     $ExitCode = $LASTEXITCODE

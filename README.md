@@ -141,6 +141,18 @@ C:\Users\muski\mlb_props\logs\hot_hits_cmd_bootstrap.log
 C:\Users\muski\mlb_props\logs\hot_hits_task.log
 ```
 
+The scheduled hot-hits wrapper also exports every qualified candidate to:
+
+```text
+C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json
+```
+
+To send logs plus hot-hits history to another machine for review:
+
+```powershell
+Compress-Archive -Path C:\Users\muski\mlb_props\logs\*,C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json -DestinationPath C:\Users\muski\Desktop\mlb_props_logs.zip -Force
+```
+
 Run live mode:
 
 ```bash

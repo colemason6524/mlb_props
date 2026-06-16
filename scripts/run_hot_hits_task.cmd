@@ -24,7 +24,7 @@ if not exist "%POWERSHELL_EXE%" (
     exit /b 1
 )
 
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\scripts\run_hot_hits_task.ps1" -ProjectDir "%PROJECT_DIR%" -PythonExe "%PYTHON_EXE%" >> "%BOOT_LOG%" 2>&1
+"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%\scripts\run_hot_hits_task.ps1" -ProjectDir "%PROJECT_DIR%" -PythonExe "%PYTHON_EXE%" -ExportHistory >> "%BOOT_LOG%" 2>&1
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo [%DATE% %TIME%] Finished with exit code %EXIT_CODE%>> "%BOOT_LOG%"
