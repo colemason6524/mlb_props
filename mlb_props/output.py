@@ -294,17 +294,29 @@ def render_hot_hits_discord_embeds(
     min_score: int = 10,
 ) -> list[dict]:
     items = list(candidates)
-    shown = [item for item in items if item.score >= min_score][:limit]
+    eligible = [item for item in items if item.score >= min_score]
+    core = [item for item in eligible if item.score >= 14]
+    watchlist = [
+        item
+        for item in eligible
+        if 12 <= item.score <= 13
+        and item.batting_order is not None
+        and item.batting_order <= 5
+        and item.matchup_rating > -0.20
+    ]
+    shown_core = core[:limit]
+    shown_watchlist = watchlist[: max(0, limit - len(shown_core))]
+    shown = shown_core + shown_watchlist
     description = (
         f"{len(items)} qualified from {checked_count} likely bats across {games_count} games.\n"
-        f"Showing top {len(shown)} with score {min_score}+."
+        f"Core: score 14+. Watchlist: score 12-13, top-five order, no major matchup penalty."
     )
     embed = {
         "title": f"MLB Hot Hits - {screen_date}",
         "description": description,
         "color": _hot_hits_embed_color(shown),
         "fields": [],
-        "footer": {"text": "Confirm lineup spot before locking. Raise HOT_HITS_DISCORD_MIN_SCORE for a shorter card."},
+        "footer": {"text": "Confirm lineup spot before locking. Low-order bats are penalized harder after backtest review."},
     }
 
     if not shown:
@@ -317,10 +329,19 @@ def render_hot_hits_discord_embeds(
         )
         return [embed]
 
-    for item in shown:
+    for item in shown_core:
         embed["fields"].append(
             {
-                "name": f"{item.batter_name} ({item.team}) - Score {item.score}",
+                "name": f"Core | {item.batter_name} ({item.team}) - Score {item.score}",
+                "value": _hot_hit_embed_value(item),
+                "inline": False,
+            }
+        )
+
+    for item in shown_watchlist:
+        embed["fields"].append(
+            {
+                "name": f"Watchlist | {item.batter_name} ({item.team}) - Score {item.score}",
                 "value": _hot_hit_embed_value(item),
                 "inline": False,
             }

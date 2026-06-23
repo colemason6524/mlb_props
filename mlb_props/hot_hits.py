@@ -199,12 +199,12 @@ def _score_candidate(
     if batter.batting_order is not None and batter.batting_order <= 5:
         score += 1
         flags.append("ORDER_TOP")
-    elif batter.batting_order is not None and batter.batting_order >= 8:
-        score -= 1
+    elif batter.batting_order is not None and batter.batting_order >= 7:
+        score -= 2
         flags.append("ORDER_LOW")
 
     if matchup_rating >= 0.20:
-        score += 2
+        score += 3
         flags.append("MATCHUP_PLUS")
     elif matchup_rating <= -0.20:
         score -= 2
@@ -212,6 +212,9 @@ def _score_candidate(
 
     pitcher_hit_rate_recent = _pitcher_hits_allowed_rate(pitcher_last_5)
     if pitcher_hit_rate_recent >= 0.280:
+        score += 3
+        flags.append("PITCHER_HITS")
+    elif pitcher_hit_rate_recent >= 0.260:
         score += 1
         flags.append("PITCHER_HITS")
     elif pitcher_hit_rate_recent <= 0.220 and pitcher_logs:
@@ -230,12 +233,12 @@ def _score_candidate(
         flags.append("WALK_RISK")
 
     if bvp is not None:
-        if bvp.at_bats >= 6 and (bvp.batting_average or 0.0) >= 0.300:
+        if bvp.at_bats >= 8 and (bvp.batting_average or 0.0) >= 0.300:
             score += 1
             flags.append("BVP_PLUS")
-        elif 0 < bvp.at_bats < 6:
+        elif 0 < bvp.at_bats < 8:
             flags.append("BVP_THIN")
-        elif bvp.at_bats >= 6 and (bvp.batting_average or 0.0) <= 0.180:
+        elif bvp.at_bats >= 8 and (bvp.batting_average or 0.0) <= 0.180:
             score -= 1
             flags.append("BVP_MINUS")
 
