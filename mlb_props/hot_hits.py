@@ -196,15 +196,17 @@ def _score_candidate(
     elif avg_last_5 < season_avg:
         score -= 1
 
-    if batter.batting_order is not None and batter.batting_order <= 5:
+    if batter.batting_order is not None and batter.batting_order <= 4:
         score += 1
         flags.append("ORDER_TOP")
-    elif batter.batting_order is not None and batter.batting_order >= 7:
+    elif batter.batting_order is not None and 5 <= batter.batting_order <= 7:
+        flags.append("ORDER_VALUE")
+    elif batter.batting_order is not None and batter.batting_order >= 8:
         score -= 2
         flags.append("ORDER_LOW")
 
     if matchup_rating >= 0.20:
-        score += 3
+        score += 2
         flags.append("MATCHUP_PLUS")
     elif matchup_rating <= -0.20:
         score -= 2
@@ -212,7 +214,7 @@ def _score_candidate(
 
     pitcher_hit_rate_recent = _pitcher_hits_allowed_rate(pitcher_last_5)
     if pitcher_hit_rate_recent >= 0.280:
-        score += 3
+        score += 2
         flags.append("PITCHER_HITS")
     elif pitcher_hit_rate_recent >= 0.260:
         score += 1

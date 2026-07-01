@@ -28,6 +28,20 @@ def live_coverage_floor(game_count: int) -> int:
     return max(6, min(12, game_count))
 
 
+def line_coverage_status(diagnostics: dict, prop_line_count: int, game_count: int) -> str:
+    if game_count <= 0:
+        return "unknown"
+    floor = live_coverage_floor(game_count)
+    fanduel_loaded = diagnostics.get("fanduel_team_pages_loaded", diagnostics.get("team_pages_loaded", 0))
+    fanduel_expected = diagnostics.get("fanduel_expected_team_pages", diagnostics.get("expected_team_pages", 0))
+    fanduel_lines = diagnostics.get("fanduel_unique_lines_returned", diagnostics.get("unique_lines_returned", prop_line_count))
+    if fanduel_expected and fanduel_loaded >= max(1, fanduel_expected // 2) and fanduel_lines == 0 and prop_line_count == 0:
+        return "source_failed"
+    if prop_line_count < floor:
+        return "thin"
+    return "ok"
+
+
 def maybe_export_live_scrape_snapshot(lines_source, screen_date, prop_line_count: int, game_count: int):
     diagnostics = line_source_diagnostics(lines_source)
     if not diagnostics:
@@ -49,6 +63,8 @@ def render_live_diagnostics(diagnostics: dict, prop_lines: list) -> str | None:
             f"FanDuel {diagnostics.get('fanduel_team_pages_loaded', 0)}/"
             f"{diagnostics.get('fanduel_expected_team_pages', 0)} team pages, "
             f"{diagnostics.get('fanduel_unique_lines_returned', 0)} Ks lines; "
+            f"DraftKings Ks markets {diagnostics.get('draftkings_strikeout_markets_seen', 0)}, "
+            f"{diagnostics.get('draftkings_strikeout_unique_lines_returned', 0)} Ks lines; "
             f"DraftKings outs markets {diagnostics.get('draftkings_outs_markets_seen', 0)}, "
             f"{diagnostics.get('draftkings_outs_unique_lines_returned', 0)} outs lines."
         )
@@ -58,6 +74,21 @@ def render_live_diagnostics(diagnostics: dict, prop_lines: list) -> str | None:
         f"{diagnostics.get('strikeout_lines_found', 0)} raw Ks lines, "
         f"{diagnostics.get('unique_lines_returned', len(prop_lines))} unique lines."
     )
+
+
+def render_line_coverage_warning(status: str, diagnostics: dict, prop_line_count: int, game_count: int) -> str | None:
+    if status == "source_failed":
+        return (
+            "Warning: live Ks line source appears stale or failed. "
+            f"Loaded team pages but found {prop_line_count} Ks lines for a {game_count}-game slate. "
+            "Treat this run as unsuitable for model evaluation."
+        )
+    if status == "thin":
+        return (
+            f"Warning: live line coverage looks thin for a {game_count}-game slate "
+            f"(floor: {live_coverage_floor(game_count)}, found: {prop_line_count})."
+        )
+    return None
 
 
 def warm_cache_mode_enabled() -> bool:
@@ -79,6 +110,10 @@ def export_run_history(filename_prefix: str, payload: dict) -> Path:
 
 def lean_min_score(active_screen_settings) -> int:
     return max(4, active_screen_settings.min_display_score - 3)
+
+
+def watch_min_score(active_screen_settings) -> int:
+    return max(0, active_screen_settings.min_display_score - 7)
 
 
 def print_cache_report() -> None:
@@ -148,6 +183,12 @@ def main() -> int:
             print("Missing ODDS_API_KEY environment variable for DATA_MODE=live.", file=sys.stderr)
             return 1
     prop_lines = lines_source.fetch_prop_lines(games, settings.supported_prop_types)
+    diagnostics = line_source_diagnostics(lines_source)
+    coverage_status = (
+        line_coverage_status(diagnostics, len(prop_lines), len(games))
+        if settings.data_mode == "live"
+        else "ok"
+    )
     if settings.data_mode == "live":
         logs_by_pitcher = logs_source.fetch_logs_for_lines(prop_lines, season=settings.screen_date.year)
         starter_logs_by_pitcher = logs_source.fetch_logs_for_games(games, season=settings.screen_date.year)
@@ -172,7 +213,6 @@ def main() -> int:
     )
 
     if warm_cache_only:
-        diagnostics = line_source_diagnostics(lines_source)
         snapshot_path = None
         if settings.data_mode == "live":
             snapshot_path = maybe_export_live_scrape_snapshot(
@@ -191,12 +231,9 @@ def main() -> int:
             rendered = render_live_diagnostics(diagnostics, prop_lines)
             if rendered:
                 print(f"- {rendered.removeprefix('Live line diagnostics: ')}")
-            low_coverage = len(prop_lines) < live_coverage_floor(len(games))
-            if low_coverage:
-                print(
-                    f"- Warning: live line coverage looks thin for a {len(games)}-game slate "
-                    f"(floor: {live_coverage_floor(len(games))}, found: {len(prop_lines)})."
-                )
+            coverage_warning = render_line_coverage_warning(coverage_status, diagnostics, len(prop_lines), len(games))
+            if coverage_warning:
+                print(f"- {coverage_warning}")
             if snapshot_path is not None:
                 print(f"- Diagnostics snapshot: {snapshot_path}")
         return 0
@@ -234,13 +271,13 @@ def main() -> int:
             candidates=result.candidates,
             min_score=active_screen_settings.min_display_score,
             lean_min_score=lean_min_score(active_screen_settings),
+            watch_min_score=watch_min_score(active_screen_settings),
             limit=settings.display_limit,
         )
     )
     print("")
     print(render_starter_board(starter_board, limit=settings.display_limit))
     print("")
-    diagnostics = line_source_diagnostics(lines_source)
     snapshot_path = None
     if settings.data_mode == "live":
         snapshot_path = maybe_export_live_scrape_snapshot(
@@ -253,11 +290,9 @@ def main() -> int:
             rendered = render_live_diagnostics(diagnostics, prop_lines)
             if rendered:
                 print(rendered)
-            if len(prop_lines) < live_coverage_floor(len(games)):
-                print(
-                    f"Warning: live line coverage looks thin for a {len(games)}-game slate "
-                    f"(floor: {live_coverage_floor(len(games))}, found: {len(prop_lines)})."
-                )
+            coverage_warning = render_line_coverage_warning(coverage_status, diagnostics, len(prop_lines), len(games))
+            if coverage_warning:
+                print(coverage_warning)
             if snapshot_path is not None:
                 print(f"Diagnostics snapshot saved to {snapshot_path}")
     if used_relaxed_live_pass:
@@ -276,6 +311,13 @@ def main() -> int:
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "settings": asdict(settings),
                 "screen_settings": asdict(active_screen_settings),
+                "line_coverage_status": coverage_status,
+                "line_coverage": {
+                    "games": len(games),
+                    "prop_lines": len(prop_lines),
+                    "floor": live_coverage_floor(len(games)),
+                    "diagnostics": diagnostics,
+                },
                 "candidates": [asdict(item) for item in result.candidates],
                 "displayed_candidates": [
                     asdict(item)
@@ -286,6 +328,16 @@ def main() -> int:
                     asdict(item)
                     for item in result.candidates
                     if lean_min_score(active_screen_settings) <= item.score < active_screen_settings.min_display_score
+                ],
+                "watch_candidates": [
+                    asdict(item)
+                    for item in result.candidates
+                    if watch_min_score(active_screen_settings) <= item.score < lean_min_score(active_screen_settings)
+                ],
+                "model_opinions": [
+                    asdict(item)
+                    for item in starter_board
+                    if item.strikeout_line is not None and item.lean_side is not None
                 ],
                 "result": asdict(result),
                 "starter_board": [asdict(item) for item in starter_board],

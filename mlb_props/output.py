@@ -33,12 +33,17 @@ FLAG_LABELS = {
     "CONSISTENT": "Consistent",
     "RECENT_WEAK": "RecentWeak",
     "EDGE_PLUS": "Edge+",
+    "EDGE_EXTREME": "EdgeExtreme",
     "DEPTH_PLUS": "Depth+",
     "SHORT_LEASH_PLUS": "ShortLeash+",
+    "MATCHUP_K_PLUS": "OppK+",
+    "MATCHUP_K_MINUS": "OppK-",
+    "OPP_OUTS_PLUS": "OppOuts+",
     "HOT": "Hot",
     "VERY_HOT": "VeryHot",
     "HIT_STREAK": "HitStreak",
     "ORDER_TOP": "TopOrder",
+    "ORDER_VALUE": "ValueOrder",
     "ORDER_LOW": "LowOrder",
     "MATCHUP_PLUS": "Matchup+",
     "MATCHUP_MINUS": "Matchup-",
@@ -52,7 +57,13 @@ FLAG_LABELS = {
 }
 
 
-def render_candidates(candidates: Iterable[Candidate], limit: int = 30, min_score: int = 7, lean_min_score: int = 4) -> str:
+def render_candidates(
+    candidates: Iterable[Candidate],
+    limit: int = 30,
+    min_score: int = 7,
+    lean_min_score: int = 4,
+    watch_min_score: int = 0,
+) -> str:
     all_candidates = list(candidates)
     core_candidates = sorted(
         (candidate for candidate in all_candidates if candidate.score >= min_score),
@@ -64,12 +75,19 @@ def render_candidates(candidates: Iterable[Candidate], limit: int = 30, min_scor
         key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
         reverse=True,
     )
+    watch_candidates = sorted(
+        (candidate for candidate in all_candidates if watch_min_score <= candidate.score < lean_min_score),
+        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
+        reverse=True,
+    )
 
     sections: list[tuple[str, list[Candidate]]] = []
     if core_candidates:
         sections.append(("Core Plays", core_candidates[:limit]))
     if lean_candidates:
         sections.append(("Leans", lean_candidates[:limit]))
+    if watch_candidates:
+        sections.append(("Watchlist", watch_candidates[:limit]))
     if not sections:
         sections.append(("Candidates", []))
 
@@ -295,28 +313,23 @@ def render_hot_hits_discord_embeds(
 ) -> list[dict]:
     items = list(candidates)
     eligible = [item for item in items if item.score >= min_score]
-    core = [item for item in eligible if item.score >= 14]
-    watchlist = [
-        item
-        for item in eligible
-        if 12 <= item.score <= 13
-        and item.batting_order is not None
-        and item.batting_order <= 5
-        and item.matchup_rating > -0.20
-    ]
+    core = [item for item in eligible if _hot_hit_tier(item) == "Core"]
+    value = [item for item in eligible if _hot_hit_tier(item) == "Value"]
+    thin = [item for item in eligible if _hot_hit_tier(item) == "Thin"]
     shown_core = core[:limit]
-    shown_watchlist = watchlist[: max(0, limit - len(shown_core))]
-    shown = shown_core + shown_watchlist
+    shown_value = value[: max(0, limit - len(shown_core))]
+    shown_thin = thin[: max(0, limit - len(shown_core) - len(shown_value))]
+    shown = shown_core + shown_value + shown_thin
     description = (
         f"{len(items)} qualified from {checked_count} likely bats across {games_count} games.\n"
-        f"Core: score 14+. Watchlist: score 12-13, top-five order, no major matchup penalty."
+        f"Core: safer hit profile. Value: hot hand with potentially softer market profile. Thin: needs price/lineup help."
     )
     embed = {
         "title": f"MLB Hot Hits - {screen_date}",
         "description": description,
         "color": _hot_hits_embed_color(shown),
         "fields": [],
-        "footer": {"text": "Confirm lineup spot before locking. Low-order bats are penalized harder after backtest review."},
+        "footer": {"text": "Confirm lineup spot before locking. Odds are a mental model here, not pulled into scoring."},
     }
 
     if not shown:
@@ -338,16 +351,42 @@ def render_hot_hits_discord_embeds(
             }
         )
 
-    for item in shown_watchlist:
+    for item in shown_value:
         embed["fields"].append(
             {
-                "name": f"Watchlist | {item.batter_name} ({item.team}) - Score {item.score}",
+                "name": f"Value | {item.batter_name} ({item.team}) - Score {item.score}",
+                "value": _hot_hit_embed_value(item),
+                "inline": False,
+            }
+        )
+
+    for item in shown_thin:
+        embed["fields"].append(
+            {
+                "name": f"Thin | {item.batter_name} ({item.team}) - Score {item.score}",
                 "value": _hot_hit_embed_value(item),
                 "inline": False,
             }
         )
 
     return [embed]
+
+
+def _hot_hit_tier(item: HotHitCandidate) -> str:
+    batting_order = item.batting_order or 99
+    low_order = batting_order >= 8
+    value_order = 5 <= batting_order <= 7
+    matchup_floor = item.matchup_rating > -0.20
+    strong_contact_spot = item.pitcher_hits_allowed_rate_last_5 >= 0.280 or item.matchup_rating >= 0.20
+    hot_hand = item.avg_last_5 >= 0.400 or item.hit_games_last_5 >= 5
+
+    if item.score >= 14 and batting_order <= 5 and matchup_floor:
+        return "Core"
+    if item.score >= 12 and hot_hand and matchup_floor and not low_order:
+        return "Value"
+    if item.score >= 11 and value_order and hot_hand and strong_contact_spot:
+        return "Value"
+    return "Thin"
 
 
 def _hot_hit_embed_value(item: HotHitCandidate) -> str:

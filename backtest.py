@@ -94,6 +94,7 @@ class LoadedHistory:
     selected_path: str | None
     selected_displayed_count: int = 0
     selected_lean_count: int = 0
+    selected_watch_count: int = 0
     selected_candidate_count: int = 0
 
 
@@ -110,15 +111,31 @@ def include_leans_enabled() -> bool:
     return "--include-leans" in sys.argv
 
 
+def include_watch_enabled() -> bool:
+    return "--include-watch" in sys.argv
+
+
+def prediction_scope_label() -> str:
+    if include_watch_enabled():
+        return "Core Plays + Leans + Watchlist"
+    if include_leans_enabled():
+        return "Core Plays + Leans"
+    return "Core Plays only"
+
+
 def _candidate_rows_from_payload(payload: dict) -> list[dict]:
     displayed = payload.get("displayed_candidates")
     leans = payload.get("lean_candidates")
+    watch = payload.get("watch_candidates")
     if isinstance(displayed, list):
-        if include_leans_enabled():
+        rows = list(displayed)
+        if include_leans_enabled() or include_watch_enabled():
             if isinstance(leans, list):
-                return displayed + leans
-            return displayed
-        return displayed
+                rows.extend(leans)
+        if include_watch_enabled():
+            if isinstance(watch, list):
+                rows.extend(watch)
+        return rows
     candidates = payload.get("candidates")
     if isinstance(candidates, list):
         return candidates
@@ -152,7 +169,7 @@ def _payload_mode_rank(mode: str | None) -> int:
 
 def _load_latest_predictions() -> LoadedHistory:
     payloads: list[tuple[datetime, str, str | None, list[dict], str]] = []
-    latest_counts_by_path: dict[str, tuple[int, int, int]] = {}
+    latest_counts_by_path: dict[str, tuple[int, int, int, int]] = {}
     for path in _history_files():
         payload = json.loads(path.read_text())
         screen_date = payload.get("screen_date")
@@ -174,10 +191,12 @@ def _load_latest_predictions() -> LoadedHistory:
             candidates.append(candidate | {"subject_id": subject_id})
         displayed_candidates = payload.get("displayed_candidates")
         lean_candidates = payload.get("lean_candidates")
+        watch_candidates = payload.get("watch_candidates")
         all_candidates = payload.get("candidates")
         latest_counts_by_path[str(path)] = (
             len(displayed_candidates) if isinstance(displayed_candidates, list) else 0,
             len(lean_candidates) if isinstance(lean_candidates, list) else 0,
+            len(watch_candidates) if isinstance(watch_candidates, list) else 0,
             len(all_candidates) if isinstance(all_candidates, list) else 0,
         )
         payloads.append((exported_at, screen_date, data_mode, candidates, str(path)))
@@ -220,11 +239,12 @@ def _load_latest_predictions() -> LoadedHistory:
         loaded_predictions.extend(candidate | {"screen_date": screen_date} for candidate in candidates)
     selected_displayed_count = 0
     selected_lean_count = 0
+    selected_watch_count = 0
     selected_candidate_count = 0
     if selected_path is not None:
-        selected_displayed_count, selected_lean_count, selected_candidate_count = latest_counts_by_path.get(
+        selected_displayed_count, selected_lean_count, selected_watch_count, selected_candidate_count = latest_counts_by_path.get(
             selected_path,
-            (0, 0, 0),
+            (0, 0, 0, 0),
         )
     return LoadedHistory(
         predictions=loaded_predictions,
@@ -233,6 +253,7 @@ def _load_latest_predictions() -> LoadedHistory:
         selected_path=selected_path,
         selected_displayed_count=selected_displayed_count,
         selected_lean_count=selected_lean_count,
+        selected_watch_count=selected_watch_count,
         selected_candidate_count=selected_candidate_count,
     )
 
@@ -758,16 +779,19 @@ def main() -> int:
             return 0
 
         print("No backtestable strikeout predictions were found in the selected history snapshot.")
-        print(f"- Prediction scope: {'Core Plays + Leans' if include_leans_enabled() else 'Core Plays only'}")
+        print(f"- Prediction scope: {prediction_scope_label()}")
         if loaded.selected_mode:
             print(f"- Selected history mode: {loaded.selected_mode}")
         if loaded.selected_path:
             print(f"- Selected history file: {loaded.selected_path}")
         print(f"- Displayed core plays in snapshot: {loaded.selected_displayed_count}")
         print(f"- Lean plays in snapshot: {loaded.selected_lean_count}")
+        print(f"- Watchlist plays in snapshot: {loaded.selected_watch_count}")
         print(f"- Qualified candidates before score filtering: {loaded.selected_candidate_count}")
         if not include_leans_enabled() and loaded.selected_lean_count > 0:
             print("- Tip: run python3 backtest.py --include-leans to grade the broader displayed board.")
+        elif not include_watch_enabled() and loaded.selected_watch_count > 0:
+            print("- Tip: run python3 backtest.py --include-watch to grade core, leans, and watchlist.")
         elif loaded.selected_candidate_count > 0:
             print("- Note: this slate had qualified candidates, but none made the displayed board for the selected prediction scope.")
         return 0
@@ -796,7 +820,7 @@ def main() -> int:
         lines.append(f"- Screen date included: {included_dates[0]}")
     if loaded.selected_mode and not all_history_mode_enabled():
         lines.append(f"- History mode used: {loaded.selected_mode}")
-    lines.append(f"- Prediction scope: {'Core Plays + Leans' if include_leans_enabled() else 'Core Plays only'}")
+    lines.append(f"- Prediction scope: {prediction_scope_label()}")
     lines.append("- Prop type included: PITCHER_STRIKEOUTS")
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
     lines.append(f"- Finished predictions graded: {len(resolved)}")

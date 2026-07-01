@@ -360,6 +360,12 @@ def _score_candidate(
         projected_batters_faced=projected_batters_faced,
         flags=flags,
     )
+    score += _matchup_confidence_adjustment(
+        prop_type=prop_type,
+        side=side,
+        matchup_context=matchup_context,
+        flags=flags,
+    )
 
     if side_delta_season >= settings.thresholds.strong_delta:
         score += 3
@@ -518,10 +524,16 @@ def _projection_confidence_adjustment(
 ) -> int:
     adjustment = 0
 
-    if projected_edge >= 1.5:
+    if projected_edge >= 2.0:
+        adjustment += 2
+        flags.append("EDGE_PLUS")
+        flags.append("EDGE_EXTREME")
+    elif projected_edge >= 1.5:
         adjustment += 2
         flags.append("EDGE_PLUS")
     elif projected_edge >= 1.0:
+        adjustment += 1
+    elif projected_edge >= 0.75:
         adjustment += 1
     elif projected_edge <= 0.25:
         adjustment -= 1
@@ -551,6 +563,57 @@ def _projection_confidence_adjustment(
             adjustment += 1
         elif projected_batters_faced >= 26.0:
             adjustment -= 1
+
+    return adjustment
+
+
+def _matchup_confidence_adjustment(
+    prop_type: str,
+    side: str,
+    matchup_context: MatchupContext | None,
+    flags: list[str],
+) -> int:
+    if prop_type != PITCHER_STRIKEOUTS or matchup_context is None:
+        return 0
+
+    adjustment = 0
+    opponent_k_rate = matchup_context.opponent_k_rate_vs_hand
+    opponent_outs_factor = matchup_context.opponent_outs_factor
+
+    if side == "OVER":
+        if opponent_k_rate >= 0.245:
+            adjustment += 2
+            flags.append("MATCHUP_K_PLUS")
+        elif opponent_k_rate >= 0.23:
+            adjustment += 1
+        elif opponent_k_rate <= 0.205:
+            adjustment -= 2
+            flags.append("MATCHUP_K_MINUS")
+        elif opponent_k_rate <= 0.215:
+            adjustment -= 1
+
+        if opponent_outs_factor >= 1.04:
+            adjustment += 1
+            flags.append("OPP_OUTS_PLUS")
+        elif opponent_outs_factor <= 0.97:
+            adjustment -= 1
+    else:
+        if opponent_k_rate <= 0.205:
+            adjustment += 2
+            flags.append("MATCHUP_K_MINUS")
+        elif opponent_k_rate <= 0.215:
+            adjustment += 1
+        elif opponent_k_rate >= 0.245:
+            adjustment -= 2
+            flags.append("MATCHUP_K_PLUS")
+        elif opponent_k_rate >= 0.23:
+            adjustment -= 1
+
+        if opponent_outs_factor <= 0.97:
+            adjustment += 1
+        elif opponent_outs_factor >= 1.04:
+            adjustment -= 1
+            flags.append("OPP_OUTS_PLUS")
 
     return adjustment
 
@@ -587,6 +650,8 @@ def _risk_stack_adjustment(
     if "LINE_HIGH" in flags and caution_count >= 2:
         adjustment -= 1
     if (side_delta_last_5 >= 2.0 or side_delta_season >= 2.0) and caution_count >= 2:
+        adjustment -= 1
+    if "EDGE_EXTREME" in flags and caution_count >= 1:
         adjustment -= 1
 
     # Volatile over spots were still reaching Core too easily off trend/matchup support.
