@@ -107,20 +107,28 @@ def all_history_mode_enabled() -> bool:
     return "--all-history" in sys.argv
 
 
+def core_only_enabled() -> bool:
+    return "--core-only" in sys.argv
+
+
+def leans_only_scope_enabled() -> bool:
+    return "--include-leans" in sys.argv and "--include-watch" not in sys.argv
+
+
 def include_leans_enabled() -> bool:
-    return "--include-leans" in sys.argv
+    return not core_only_enabled()
 
 
 def include_watch_enabled() -> bool:
-    return "--include-watch" in sys.argv
+    return not core_only_enabled() and not leans_only_scope_enabled()
 
 
 def prediction_scope_label() -> str:
+    if core_only_enabled():
+        return "Core Plays only"
     if include_watch_enabled():
         return "Core Plays + Leans + Watchlist"
-    if include_leans_enabled():
-        return "Core Plays + Leans"
-    return "Core Plays only"
+    return "Core Plays + Leans"
 
 
 def _candidate_rows_from_payload(payload: dict) -> list[dict]:

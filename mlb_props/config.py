@@ -206,6 +206,7 @@ class Settings:
     display_limit: int = 30
     data_mode: str = "sample"
     line_source: str = "fanduel"
+    run_note: str = ""
 
 
 def load_settings() -> Settings:
@@ -258,4 +259,5 @@ def load_settings() -> Settings:
         display_limit=int(os.environ.get("DISPLAY_LIMIT", "30")),
         data_mode=os.environ.get("DATA_MODE", "sample").strip().lower() or "sample",
         line_source=os.environ.get("LINE_SOURCE", "fanduel").strip().lower() or "fanduel",
+        run_note=(os.environ.get("RUN_NOTE", "") or os.environ.get("DAILY_NOTE", "")).strip(),
     )

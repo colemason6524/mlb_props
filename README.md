@@ -147,10 +147,42 @@ The scheduled hot-hits wrapper also exports every qualified candidate to:
 C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json
 ```
 
-To send logs plus hot-hits history to another machine for review:
+### Windows Task Scheduler: Pitcher Props
+
+Use this for the once-per-day full pregame pitcher strikeout board. The wrapper runs live mode and exports history automatically.
+
+For Task Scheduler, edit `scripts\run_pitcher_props_task.cmd` if your repo is not at `C:\Users\muski\mlb_props`.
+Then create the task with:
+
+- Program/script: `C:\Windows\System32\cmd.exe`
+- Add arguments: `/c ""C:\Users\muski\mlb_props\scripts\run_pitcher_props_task.cmd""`
+- Start in: `C:\Users\muski\mlb_props`
+- Run whether user is logged on or not: enabled if you want it fully unattended
+- Run with highest privileges: enabled
+
+Before using Task Scheduler, test the exact command manually:
 
 ```powershell
-Compress-Archive -Path C:\Users\muski\mlb_props\logs\*,C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json -DestinationPath C:\Users\muski\Desktop\mlb_props_logs.zip -Force
+C:\Windows\System32\cmd.exe /c ""C:\Users\muski\mlb_props\scripts\run_pitcher_props_task.cmd""
+```
+
+The pitcher-props task wrapper writes diagnostics to:
+
+```text
+C:\Users\muski\mlb_props\logs\pitcher_props_cmd_bootstrap.log
+C:\Users\muski\mlb_props\logs\pitcher_props_task.log
+```
+
+The scheduled pitcher-props wrapper exports the full board, model opinions, line coverage, and optional run note to:
+
+```text
+C:\Users\muski\mlb_props\outputs\history\pitcher_props_*.json
+```
+
+To send logs plus saved history to another machine for review:
+
+```powershell
+Compress-Archive -Path C:\Users\muski\mlb_props\logs\*,C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json,C:\Users\muski\mlb_props\outputs\history\pitcher_props_*.json -DestinationPath C:\Users\muski\Desktop\mlb_props_logs.zip -Force
 ```
 
 Run live mode:

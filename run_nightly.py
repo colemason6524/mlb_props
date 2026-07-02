@@ -311,6 +311,7 @@ def main() -> int:
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "settings": asdict(settings),
                 "screen_settings": asdict(active_screen_settings),
+                "run_note": settings.run_note,
                 "line_coverage_status": coverage_status,
                 "line_coverage": {
                     "games": len(games),
