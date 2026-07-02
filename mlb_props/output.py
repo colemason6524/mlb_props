@@ -192,6 +192,115 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
     return "\n".join(output)
 
 
+def render_pitcher_props_discord_embeds(
+    candidates: Iterable[Candidate],
+    screen_date,
+    games_count: int,
+    prop_line_count: int,
+    coverage_status: str,
+    min_score: int,
+    lean_min_score: int,
+    watch_min_score: int,
+    core_limit: int = 5,
+    watch_limit: int = 5,
+) -> list[dict]:
+    items = list(candidates)
+    sorted_items = sorted(
+        items,
+        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.projected_outs),
+        reverse=True,
+    )
+    core = [item for item in sorted_items if item.score >= min_score][:core_limit]
+    watch = [
+        item
+        for item in sorted_items
+        if watch_min_score <= item.score < min_score
+    ][:watch_limit]
+
+    description = (
+        f"{prop_line_count} prop lines across {games_count} games. "
+        f"Coverage `{coverage_status}`. "
+        "Core is the stricter board; Watchlist is five names worth monitoring, not auto-plays."
+    )
+    embed = {
+        "title": f"MLB Pitcher Props - {screen_date}",
+        "description": description,
+        "color": _pitcher_props_embed_color(core, watch, coverage_status),
+        "fields": [],
+        "footer": {"text": "Confirm line availability and game status before locking. Saved by scheduled pregame run."},
+    }
+
+    if not core:
+        embed["fields"].append(
+            {
+                "name": "Core Plays",
+                "value": "No core plays cleared today's score threshold.",
+                "inline": False,
+            }
+        )
+    else:
+        for item in core:
+            prop_label = _pitcher_prop_label(item)
+            embed["fields"].append(
+                {
+                    "name": f"Core | {item.subject_name} {item.side} {item.line:.1f} {prop_label} - Score {item.score}",
+                    "value": _pitcher_prop_embed_value(item),
+                    "inline": False,
+                }
+            )
+
+    if not watch:
+        embed["fields"].append(
+            {
+                "name": "Five To Watch",
+                "value": "No watchlist names cleared the display floor.",
+                "inline": False,
+            }
+        )
+    else:
+        for item in watch:
+            label = "Lean" if item.score >= lean_min_score else "Watch"
+            prop_label = _pitcher_prop_label(item)
+            embed["fields"].append(
+                {
+                    "name": f"{label} | {item.subject_name} {item.side} {item.line:.1f} {prop_label} - Score {item.score}",
+                    "value": _pitcher_prop_embed_value(item),
+                    "inline": False,
+                }
+            )
+
+    return [embed]
+
+
+def _pitcher_prop_embed_value(item: Candidate) -> str:
+    flags = ", ".join(_display_flag(flag) for flag in item.flags[:6]) or "-"
+    projected = item.projected_outs if item.prop_type == "PITCHER_OUTS_RECORDED" else item.projected_strikeouts
+    return (
+        f"`{item.team}` vs `{item.opponent}` | Proj `{projected:.1f}` "
+        f"| Edge `{projected - item.line:+.1f}` | Match `{item.matchup_rating:+.2f}`\n"
+        f"Outs `{item.projected_outs:.1f}` | BF `{item.projected_batters_faced:.1f}` "
+        f"| KRate `{item.projected_k_rate:.3f}` | L5 `{item.hits_last_5}/{item.played_last_5}` "
+        f"| L10 `{item.hits_last_10}/{item.played_last_10}`\n"
+        f"Flags: {flags}"
+    )
+
+
+def _pitcher_prop_label(item: Candidate) -> str:
+    if item.prop_type == "PITCHER_OUTS_RECORDED":
+        return "Outs"
+    return "Ks"
+
+
+def _pitcher_props_embed_color(core: list[Candidate], watch: list[Candidate], coverage_status: str) -> int:
+    if coverage_status == "source_failed":
+        return 0xE74C3C
+    if core:
+        return 0x2ECC71
+    if watch:
+        return 0xF1C40F
+    return 0x747F8D
+
+
 def render_hot_hit_candidates(candidates: Iterable[HotHitCandidate], limit: int = 30) -> str:
     items = list(candidates)[:limit]
     headers = [

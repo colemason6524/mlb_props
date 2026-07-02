@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
@@ -8,7 +9,8 @@ from pathlib import Path
 
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
-from mlb_props.output import render_candidates, render_starter_board
+from mlb_props.notifiers.discord import send_discord_embeds
+from mlb_props.output import render_candidates, render_pitcher_props_discord_embeds, render_starter_board
 from mlb_props.screener import build_daily_starter_board, screen_pitcher_props
 from mlb_props.sources.mlb_stats_api import MlbStatsApiPitcherLogsSource, MlbStatsApiSlateSource
 from mlb_props.sources.odds_api import MlbOddsApiSource
@@ -22,6 +24,17 @@ def line_source_diagnostics(lines_source) -> dict:
     if callable(diagnostics_fn):
         return diagnostics_fn()
     return {}
+
+
+def discord_notifications_enabled() -> bool:
+    return os.environ.get("SEND_DISCORD", "").strip().lower() in {"1", "true", "yes"}
+
+
+def discord_webhook_url() -> str:
+    return (
+        os.environ.get("PITCHER_PROPS_DISCORD_WEBHOOK_URL", "").strip()
+        or os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    )
 
 
 def live_coverage_floor(game_count: int) -> int:
@@ -114,6 +127,14 @@ def lean_min_score(active_screen_settings) -> int:
 
 def watch_min_score(active_screen_settings) -> int:
     return max(0, active_screen_settings.min_display_score - 7)
+
+
+def pitcher_props_discord_core_limit() -> int:
+    return int(os.environ.get("PITCHER_PROPS_DISCORD_CORE_LIMIT", "5"))
+
+
+def pitcher_props_discord_watch_limit() -> int:
+    return int(os.environ.get("PITCHER_PROPS_DISCORD_WATCH_LIMIT", "5"))
 
 
 def print_cache_report() -> None:
@@ -301,6 +322,25 @@ def main() -> int:
         f"Evaluated {result.evaluated_prop_lines} prop lines; "
         f"{len(result.candidates)} candidates qualified before score filtering."
     )
+
+    if discord_notifications_enabled():
+        embeds = render_pitcher_props_discord_embeds(
+            candidates=result.candidates,
+            screen_date=settings.screen_date.isoformat(),
+            games_count=len(games),
+            prop_line_count=len(prop_lines),
+            coverage_status=coverage_status,
+            min_score=active_screen_settings.min_display_score,
+            lean_min_score=lean_min_score(active_screen_settings),
+            watch_min_score=watch_min_score(active_screen_settings),
+            core_limit=pitcher_props_discord_core_limit(),
+            watch_limit=pitcher_props_discord_watch_limit(),
+        )
+        discord_result = send_discord_embeds(discord_webhook_url(), embeds)
+        if discord_result.ok:
+            print("Discord notification: sent")
+        else:
+            print(f"Discord notification: failed ({discord_result.error or discord_result.status_code})")
 
     if settings.export_history:
         export_path = export_run_history(

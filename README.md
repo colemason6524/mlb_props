@@ -151,6 +151,14 @@ C:\Users\muski\mlb_props\outputs\history\hot_hits_*.json
 
 Use this for the once-per-day full pregame pitcher strikeout board. The wrapper runs live mode and exports history automatically.
 
+The pitcher-props task can reuse `DISCORD_WEBHOOK_URL` from hot hits, or you can set a separate channel:
+
+```powershell
+setx PITCHER_PROPS_DISCORD_WEBHOOK_URL "your_pitcher_props_discord_webhook_url"
+```
+
+Close and reopen PowerShell after `setx` so Task Scheduler sees the updated environment.
+
 For Task Scheduler, edit `scripts\run_pitcher_props_task.cmd` if your repo is not at `C:\Users\muski\mlb_props`.
 Then create the task with:
 
@@ -178,6 +186,8 @@ The scheduled pitcher-props wrapper exports the full board, model opinions, line
 ```text
 C:\Users\muski\mlb_props\outputs\history\pitcher_props_*.json
 ```
+
+By default, the Discord message includes core plays plus five additional leans/watchlist names. You can tune that in `scripts\run_pitcher_props_task.ps1` with `DiscordCoreLimit` and `DiscordWatchLimit`.
 
 To send logs plus saved history to another machine for review:
 
