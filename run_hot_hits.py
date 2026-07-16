@@ -85,7 +85,7 @@ def main() -> int:
             screen_date=settings.screen_date.isoformat(),
             games_count=len(games),
             checked_count=len(projected_batters),
-            limit=min(settings.display_limit, 8),
+            limit=min(settings.display_limit, 6),
             min_score=settings.hot_hits_thresholds.discord_min_score,
         )
         result = send_discord_embeds(webhook_url, embeds)

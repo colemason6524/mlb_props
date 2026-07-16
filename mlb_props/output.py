@@ -421,7 +421,8 @@ def render_hot_hits_discord_embeds(
     min_score: int = 10,
 ) -> list[dict]:
     items = list(candidates)
-    eligible = [item for item in items if item.score >= min_score]
+    eligible = [item for item in items if _hot_hit_discord_eligible(item, min_score)]
+    eligible = sorted(eligible, key=_hot_hit_discord_sort_key, reverse=True)
     core = [item for item in eligible if _hot_hit_tier(item) == "Core"]
     value = [item for item in eligible if _hot_hit_tier(item) == "Value"]
     thin = [item for item in eligible if _hot_hit_tier(item) == "Thin"]
@@ -445,7 +446,7 @@ def render_hot_hits_discord_embeds(
         embed["fields"].append(
             {
                 "name": "No Discord plays",
-                "value": f"No hitters cleared the Discord score cutoff of {min_score}.",
+                "value": f"No hitters cleared the Discord score/profile cutoff of {min_score}.",
                 "inline": False,
             }
         )
@@ -488,14 +489,50 @@ def _hot_hit_tier(item: HotHitCandidate) -> str:
     matchup_floor = item.matchup_rating > -0.20
     strong_contact_spot = item.pitcher_hits_allowed_rate_last_5 >= 0.280 or item.matchup_rating >= 0.20
     hot_hand = item.avg_last_5 >= 0.400 or item.hit_games_last_5 >= 5
+    support_count = _hot_hit_support_count(item)
 
-    if item.score >= 14 and batting_order <= 5 and matchup_floor:
+    if item.score >= 14 and batting_order <= 4 and matchup_floor and support_count >= 2:
         return "Core"
-    if item.score >= 12 and hot_hand and matchup_floor and not low_order:
+    if item.score >= 12 and hot_hand and matchup_floor and not low_order and support_count >= 2:
         return "Value"
-    if item.score >= 11 and value_order and hot_hand and strong_contact_spot:
+    if item.score >= 11 and value_order and hot_hand and strong_contact_spot and support_count >= 2:
         return "Value"
     return "Thin"
+
+
+def _hot_hit_discord_eligible(item: HotHitCandidate, min_score: int) -> bool:
+    batting_order = item.batting_order or 99
+    support_count = _hot_hit_support_count(item)
+    if item.score >= 14 and support_count >= 1 and batting_order <= 7:
+        return True
+    if item.score >= max(min_score, 12) and support_count >= 2 and batting_order <= 7:
+        return True
+    return False
+
+
+def _hot_hit_support_count(item: HotHitCandidate) -> int:
+    return sum(
+        [
+            bool(item.batting_order is not None and item.batting_order <= 4),
+            item.matchup_rating >= 0.20,
+            item.pitcher_hits_allowed_rate_last_5 >= 0.260,
+            item.season_avg >= 0.280,
+            item.avg_last_5 >= 0.380,
+        ]
+    )
+
+
+def _hot_hit_discord_sort_key(item: HotHitCandidate) -> tuple[int, int, int, float, float, float, int]:
+    batting_order = item.batting_order or 99
+    return (
+        _hot_hit_support_count(item),
+        item.score,
+        1 if batting_order <= 4 else 0,
+        item.matchup_rating,
+        item.pitcher_hits_allowed_rate_last_5,
+        item.season_avg,
+        -batting_order,
+    )
 
 
 def _hot_hit_embed_value(item: HotHitCandidate) -> str:
