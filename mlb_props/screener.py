@@ -4,9 +4,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from math import ceil
 from statistics import mean, median, pstdev
+from types import SimpleNamespace
 
 from .config import PITCHER_OUTS_RECORDED, PITCHER_STRIKEOUTS, Settings
 from .models import Candidate, MatchupContext, PitcherGameLog, PropLine, ScreeningResult, StarterAssessment
+from .tiers import core_block_reasons
 from .utils import normalize_name
 
 
@@ -903,7 +905,7 @@ def build_daily_starter_board(
                     delta_last_5 *= -1
                     delta_last_10 *= -1
                     delta_season *= -1
-                lean_score, _ = _score_candidate(
+                lean_score, lean_flags = _score_candidate(
                     settings=settings,
                     prop_type=PITCHER_STRIKEOUTS,
                     side=lean_side,
@@ -939,6 +941,11 @@ def build_daily_starter_board(
                     side_delta_last_10=delta_last_10,
                     side_delta_season=delta_season,
                     lean_score=lean_score,
+                    line=strikeout_line.line,
+                    projected_strikeouts=projected_strikeouts,
+                    projected_outs=projected_outs,
+                    projected_batters_faced=projected_batters_faced,
+                    flags=lean_flags,
                 )
             assessments.append(
                 StarterAssessment(
@@ -1018,6 +1025,11 @@ def _starter_shortlist_status(
     side_delta_last_10: float,
     side_delta_season: float,
     lean_score: int,
+    line: float,
+    projected_strikeouts: float,
+    projected_outs: float,
+    projected_batters_faced: float,
+    flags: list[str],
 ) -> tuple[str, str]:
     if not _passes_projection_rule(
         settings,
@@ -1032,6 +1044,19 @@ def _starter_shortlist_status(
         if support_note:
             return "Watch", f"Below display threshold ({settings.min_display_score}); {support_note}"
         return "Watch", f"Below display threshold ({settings.min_display_score})"
+    tier_probe = SimpleNamespace(
+        prop_type=PITCHER_STRIKEOUTS,
+        side=side,
+        line=line,
+        score=lean_score,
+        projected_strikeouts=projected_strikeouts,
+        projected_outs=projected_outs,
+        projected_batters_faced=projected_batters_faced,
+        flags=flags,
+    )
+    core_reasons = core_block_reasons(tier_probe)
+    if core_reasons:
+        return "Watch", f"Core gate: {', '.join(core_reasons[:2])}"
     return "Qualified", f"{side} candidate made shortlist"
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .models import Candidate, HotHitCandidate, StarterAssessment
+from .tiers import candidate_tier
 
 
 FLAG_LABELS = {
@@ -66,17 +67,17 @@ def render_candidates(
 ) -> str:
     all_candidates = list(candidates)
     core_candidates = sorted(
-        (candidate for candidate in all_candidates if candidate.score >= min_score),
+        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "core"),
         key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
         reverse=True,
     )
     lean_candidates = sorted(
-        (candidate for candidate in all_candidates if lean_min_score <= candidate.score < min_score),
+        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "lean"),
         key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
         reverse=True,
     )
     watch_candidates = sorted(
-        (candidate for candidate in all_candidates if watch_min_score <= candidate.score < lean_min_score),
+        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "watch"),
         key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
         reverse=True,
     )
@@ -210,11 +211,15 @@ def render_pitcher_props_discord_embeds(
         key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.projected_outs),
         reverse=True,
     )
-    core = [item for item in sorted_items if item.score >= min_score][:core_limit]
+    core = [
+        item
+        for item in sorted_items
+        if candidate_tier(item, min_score, lean_min_score, watch_min_score) == "core"
+    ][:core_limit]
     watch = [
         item
         for item in sorted_items
-        if watch_min_score <= item.score < min_score
+        if candidate_tier(item, min_score, lean_min_score, watch_min_score) in {"lean", "watch"}
     ][:watch_limit]
 
     description = (
@@ -259,7 +264,7 @@ def render_pitcher_props_discord_embeds(
         )
     else:
         for item in watch:
-            label = "Lean" if item.score >= lean_min_score else "Watch"
+            label = "Lean" if candidate_tier(item, min_score, lean_min_score, watch_min_score) == "lean" else "Watch"
             prop_label = _pitcher_prop_label(item)
             embed["fields"].append(
                 {

@@ -17,6 +17,7 @@ from mlb_props.sources.odds_api import MlbOddsApiSource
 from mlb_props.sources.opponent_context import MlbOpponentContextSource
 from mlb_props.sources.scrape import MlbScrapeSource
 from mlb_props.sources.sample import SamplePitcherLogsSource, SamplePitcherPropsSource, SampleSlateSource
+from mlb_props.tiers import candidate_tier
 
 
 def line_source_diagnostics(lines_source) -> dict:
@@ -363,17 +364,35 @@ def main() -> int:
                 "displayed_candidates": [
                     asdict(item)
                     for item in result.candidates
-                    if item.score >= active_screen_settings.min_display_score
+                    if candidate_tier(
+                        item,
+                        active_screen_settings.min_display_score,
+                        lean_min_score(active_screen_settings),
+                        watch_min_score(active_screen_settings),
+                    )
+                    == "core"
                 ],
                 "lean_candidates": [
                     asdict(item)
                     for item in result.candidates
-                    if lean_min_score(active_screen_settings) <= item.score < active_screen_settings.min_display_score
+                    if candidate_tier(
+                        item,
+                        active_screen_settings.min_display_score,
+                        lean_min_score(active_screen_settings),
+                        watch_min_score(active_screen_settings),
+                    )
+                    == "lean"
                 ],
                 "watch_candidates": [
                     asdict(item)
                     for item in result.candidates
-                    if watch_min_score(active_screen_settings) <= item.score < lean_min_score(active_screen_settings)
+                    if candidate_tier(
+                        item,
+                        active_screen_settings.min_display_score,
+                        lean_min_score(active_screen_settings),
+                        watch_min_score(active_screen_settings),
+                    )
+                    == "watch"
                 ],
                 "model_opinions": [
                     asdict(item)
