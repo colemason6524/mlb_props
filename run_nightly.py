@@ -18,6 +18,11 @@ from mlb_props.sources.opponent_context import MlbOpponentContextSource
 from mlb_props.sources.scrape import MlbScrapeSource
 from mlb_props.sources.sample import SamplePitcherLogsSource, SamplePitcherPropsSource, SampleSlateSource
 from mlb_props.tiers import candidate_tier
+from mlb_props.version import (
+    PITCHER_HISTORY_SCHEMA_VERSION,
+    PITCHER_MODEL_VERSION,
+    PITCHER_TIER_POLICY_VERSION,
+)
 
 
 def line_source_diagnostics(lines_source) -> dict:
@@ -348,6 +353,9 @@ def main() -> int:
             "pitcher_props",
             {
                 "mode": "screen",
+                "history_schema_version": PITCHER_HISTORY_SCHEMA_VERSION,
+                "model_version": PITCHER_MODEL_VERSION,
+                "tier_policy_version": PITCHER_TIER_POLICY_VERSION,
                 "screen_date": settings.screen_date.isoformat(),
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "settings": asdict(settings),

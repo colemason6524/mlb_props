@@ -18,11 +18,22 @@ from mlb_props.sources.mlb_stats_api import (
     build_probable_pitcher_index,
 )
 from mlb_props.utils import normalize_name, normalize_team_abbr
+from mlb_props.version import (
+    PITCHER_HISTORY_SCHEMA_VERSION,
+    PITCHER_MODEL_VERSION,
+)
+
+
+LEGACY_MODEL_VERSION = "legacy-unversioned"
+LEGACY_HISTORY_SCHEMA_VERSION = 1
 
 
 @dataclass
 class ResolvedPrediction:
     screen_date: date
+    tier: str
+    model_version: str
+    history_schema_version: int
     pitcher_name: str
     team: str
     opponent: str
@@ -98,8 +109,23 @@ class LoadedHistory:
     selected_candidate_count: int = 0
 
 
-def _history_files() -> list[Path]:
-    history_dir = OUTPUTS_DIR / "history"
+def _history_dir_from_args(args: list[str] | None = None) -> Path:
+    args = list(sys.argv[1:] if args is None else args)
+    for index, arg in enumerate(args):
+        if arg == "--history-dir":
+            if index + 1 >= len(args):
+                raise ValueError("--history-dir requires a directory path")
+            return Path(args[index + 1]).expanduser()
+        if arg.startswith("--history-dir="):
+            value = arg.split("=", 1)[1]
+            if not value:
+                raise ValueError("--history-dir requires a directory path")
+            return Path(value).expanduser()
+    return OUTPUTS_DIR / "history"
+
+
+def _history_files(history_dir: Path | None = None) -> list[Path]:
+    history_dir = history_dir or _history_dir_from_args()
     return sorted(history_dir.glob("pitcher_props_*.json"))
 
 
@@ -136,19 +162,20 @@ def _candidate_rows_from_payload(payload: dict) -> list[dict]:
     leans = payload.get("lean_candidates")
     watch = payload.get("watch_candidates")
     if isinstance(displayed, list):
-        rows = list(displayed)
+        rows = [dict(row) | {"history_tier": "core"} for row in displayed]
         if include_leans_enabled() or include_watch_enabled():
             if isinstance(leans, list):
-                rows.extend(leans)
+                rows.extend(dict(row) | {"history_tier": "lean"} for row in leans)
         if include_watch_enabled():
             if isinstance(watch, list):
-                rows.extend(watch)
+                rows.extend(dict(row) | {"history_tier": "watch"} for row in watch)
         return rows
     candidates = payload.get("candidates")
     if isinstance(candidates, list):
-        return candidates
+        return [dict(row) | {"history_tier": "unclassified"} for row in candidates]
     result = payload.get("result") or {}
-    return result.get("candidates", []) if isinstance(result, dict) else []
+    rows = result.get("candidates", []) if isinstance(result, dict) else []
+    return [dict(row) | {"history_tier": "unclassified"} for row in rows]
 
 
 def _starter_id_map(payload: dict) -> dict[tuple[str, str], int | None]:
@@ -186,6 +213,10 @@ def _load_latest_predictions() -> LoadedHistory:
         exported_at_raw = payload.get("exported_at")
         exported_at = datetime.fromisoformat(exported_at_raw) if exported_at_raw else datetime.fromtimestamp(path.stat().st_mtime)
         data_mode = ((payload.get("settings") or {}).get("data_mode"))
+        model_version = str(payload.get("model_version") or LEGACY_MODEL_VERSION)
+        history_schema_version = int(
+            payload.get("history_schema_version") or LEGACY_HISTORY_SCHEMA_VERSION
+        )
         starter_ids = _starter_id_map(payload)
         candidates: list[dict] = []
         for candidate in _candidate_rows_from_payload(payload):
@@ -196,7 +227,14 @@ def _load_latest_predictions() -> LoadedHistory:
             subject_id = candidate.get("subject_id")
             if subject_id is None:
                 subject_id = starter_ids.get((team, pitcher_key))
-            candidates.append(candidate | {"subject_id": subject_id})
+            candidates.append(
+                candidate
+                | {
+                    "subject_id": subject_id,
+                    "model_version": model_version,
+                    "history_schema_version": history_schema_version,
+                }
+            )
         displayed_candidates = payload.get("displayed_candidates")
         lean_candidates = payload.get("lean_candidates")
         watch_candidates = payload.get("watch_candidates")
@@ -477,6 +515,11 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
         resolved.append(
             ResolvedPrediction(
                 screen_date=screen_date,
+                tier=str(prediction.get("history_tier") or "unclassified"),
+                model_version=str(prediction.get("model_version") or LEGACY_MODEL_VERSION),
+                history_schema_version=int(
+                    prediction.get("history_schema_version") or LEGACY_HISTORY_SCHEMA_VERSION
+                ),
                 pitcher_name=prediction["subject_name"],
                 team=prediction["team"],
                 opponent=prediction["opponent"],
@@ -504,7 +547,13 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                 outcome=outcome,
                 edge=edge,
                 projection_edge=(
-                    _safe_float(prediction.get("projected_strikeouts")) - float(prediction["line"])
+                    (
+                        float(prediction["line"])
+                        - _safe_float(prediction.get("projected_strikeouts"))
+                        if prediction["side"] == "UNDER"
+                        else _safe_float(prediction.get("projected_strikeouts"))
+                        - float(prediction["line"])
+                    )
                     if _safe_float(prediction.get("projected_strikeouts")) is not None
                     else None
                 ),
@@ -577,6 +626,68 @@ def _render_edge_bands(rows: list[ResolvedPrediction]) -> list[str]:
         pushes = sum(1 for row in band_rows if row.outcome == "push")
         avg_result_edge = mean(row.edge for row in band_rows) if band_rows else 0.0
         lines.append(f"- {label}: {len(band_rows)} plays, {(_hit_rate(band_rows) * 100):.1f}% hit, {pushes} pushes, avg result edge {avg_result_edge:+.2f}")
+    return lines
+
+
+def _projection_edge_band(edge: float | None) -> str:
+    if edge is None:
+        return "unknown"
+    if edge >= 2.0:
+        return "2.0+"
+    if edge >= 1.5:
+        return "1.50-1.99"
+    if edge >= 1.25:
+        return "1.25-1.49"
+    if edge >= 1.0:
+        return "1.00-1.24"
+    return "<1.00"
+
+
+def _render_projection_edge_bands(rows: list[ResolvedPrediction]) -> list[str]:
+    bands: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in rows:
+        bands[_projection_edge_band(row.projection_edge)].append(row)
+    order = ["<1.00", "1.00-1.24", "1.25-1.49", "1.50-1.99", "2.0+", "unknown"]
+    lines = ["Projected line-edge bands:"]
+    for label in order:
+        if label not in bands:
+            continue
+        band_rows = bands[label]
+        pushes = sum(1 for row in band_rows if row.outcome == "push")
+        avg_result_edge = mean(row.edge for row in band_rows)
+        lines.append(
+            f"- {label}: {len(band_rows)} plays, {(_hit_rate(band_rows) * 100):.1f}% hit, "
+            f"{pushes} pushes, avg result edge {avg_result_edge:+.2f}"
+        )
+    return lines
+
+
+def _render_tier_performance(rows: list[ResolvedPrediction]) -> list[str]:
+    buckets: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in rows:
+        buckets[row.tier].append(row)
+    lines = ["Tier performance:"]
+    for tier in ("core", "lean", "watch", "unclassified"):
+        if tier not in buckets:
+            continue
+        tier_rows = buckets[tier]
+        wins = sum(1 for row in tier_rows if row.outcome == "win")
+        losses = sum(1 for row in tier_rows if row.outcome == "loss")
+        pushes = sum(1 for row in tier_rows if row.outcome == "push")
+        lines.append(
+            f"- {tier.title()}: {wins}-{losses}, {(_hit_rate(tier_rows) * 100):.1f}% hit, "
+            f"{pushes} pushes"
+        )
+    return lines
+
+
+def _render_model_versions(rows: list[ResolvedPrediction]) -> list[str]:
+    versions = Counter((row.model_version, row.history_schema_version) for row in rows)
+    lines = ["History versions:"]
+    for (model_version, schema_version), count in sorted(versions.items()):
+        lines.append(
+            f"- Model {model_version}; history schema {schema_version}: {count} graded plays"
+        )
     return lines
 
 
@@ -658,14 +769,19 @@ def _render_projection_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
     rows_with_ks = [row for row in rows if row.projected_strikeouts is not None]
 
     if rows_with_outs:
-        avg_outs_error = mean(row.actual_outs - row.projected_outs for row in rows_with_outs)
-        lines.append(f"- Avg actual-minus-projected outs: {avg_outs_error:+.2f}")
+        outs_errors = [row.actual_outs - row.projected_outs for row in rows_with_outs]
+        lines.append(f"- Outs bias (actual minus projected): {mean(outs_errors):+.2f}")
+        lines.append(f"- Outs mean absolute error: {mean(abs(error) for error in outs_errors):.2f}")
     if rows_with_bf:
-        avg_bf_error = mean(row.actual_batters_faced - row.projected_batters_faced for row in rows_with_bf)
-        lines.append(f"- Avg actual-minus-projected BF: {avg_bf_error:+.2f}")
+        bf_errors = [
+            row.actual_batters_faced - row.projected_batters_faced for row in rows_with_bf
+        ]
+        lines.append(f"- BF bias (actual minus projected): {mean(bf_errors):+.2f}")
+        lines.append(f"- BF mean absolute error: {mean(abs(error) for error in bf_errors):.2f}")
     if rows_with_ks:
-        avg_ks_error = mean(row.actual - row.projected_strikeouts for row in rows_with_ks)
-        lines.append(f"- Avg actual-minus-projected Ks: {avg_ks_error:+.2f}")
+        ks_errors = [row.actual - row.projected_strikeouts for row in rows_with_ks]
+        lines.append(f"- Ks bias (actual minus projected): {mean(ks_errors):+.2f}")
+        lines.append(f"- Ks mean absolute error: {mean(abs(error) for error in ks_errors):.2f}")
 
     losses = [row for row in rows if row.outcome == "loss" and row.projected_strikeouts is not None]
     if not losses:
@@ -684,6 +800,23 @@ def _render_projection_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
             f"- Largest Ks miss: {biggest_ks.pitcher_name} {biggest_ks.actual - biggest_ks.projected_strikeouts:+.1f} "
             f"(proj {biggest_ks.projected_strikeouts:.1f}, actual {biggest_ks.actual:.1f})"
         )
+    opportunity_losses = [
+        row
+        for row in losses
+        if row.miss_type
+        in {
+            "Opportunity beat (deeper outing)",
+            "Opportunity miss (short outing)",
+            "Traffic spike / extra batters",
+            "Deeper outing than expected",
+            "Short outing",
+            "Pitch count spike",
+        }
+    ]
+    lines.append(
+        f"- Opportunity-related losses: {len(opportunity_losses)}/{len(losses)} "
+        f"({(len(opportunity_losses) / len(losses) * 100):.1f}%)"
+    )
     return lines
 
 
@@ -776,13 +909,18 @@ def _export_backtest_report(screen_date: str, report_text: str, mode: str = "sin
 
 
 def main() -> int:
+    try:
+        selected_history_dir = _history_dir_from_args()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     loaded = _load_latest_predictions()
     predictions = loaded.predictions
     included_dates = loaded.included_dates
     if not predictions:
-        history_files = _history_files()
+        history_files = _history_files(selected_history_dir)
         if not history_files:
-            print("No screen run history found in outputs/history yet.")
+            print(f"No screen run history found in {selected_history_dir}.")
             print("Run EXPORT_HISTORY=true python3 run_nightly.py first to generate MLB backtest snapshots.")
             return 0
 
@@ -830,6 +968,11 @@ def main() -> int:
         lines.append(f"- History mode used: {loaded.selected_mode}")
     lines.append(f"- Prediction scope: {prediction_scope_label()}")
     lines.append("- Prop type included: PITCHER_STRIKEOUTS")
+    lines.append(f"- History directory: {selected_history_dir}")
+    lines.append(
+        f"- Current report code: model {PITCHER_MODEL_VERSION}; "
+        f"history schema {PITCHER_HISTORY_SCHEMA_VERSION}"
+    )
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
     lines.append(f"- Finished predictions graded: {len(resolved)}")
     lines.append(f"- Void predictions: {len(report.voided)}")
@@ -841,9 +984,15 @@ def main() -> int:
         lines.append(f"- Average result edge vs line: {mean(row.edge for row in resolved):+.2f}")
     lines.append("")
     if resolved:
+        lines.extend(_render_model_versions(resolved))
+        lines.append("")
+        lines.extend(_render_tier_performance(resolved))
+        lines.append("")
         lines.extend(_render_score_bands(resolved))
         lines.append("")
         lines.extend(_render_edge_bands(resolved))
+        lines.append("")
+        lines.extend(_render_projection_edge_bands(resolved))
         lines.append("")
         lines.extend(_render_side_performance(resolved))
         lines.append("")
