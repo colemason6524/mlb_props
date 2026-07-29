@@ -114,6 +114,33 @@ class MatchupContext:
 
 
 @dataclass
+class OpportunityShadow:
+    version: str
+    screen_date: str
+    starts_available: int
+    recent_start_dates: list[str]
+    pitch_counts_last_3: list[int]
+    outs_last_3: list[int]
+    batters_faced_last_3: list[int]
+    pitches_per_bf_last_3: list[float | None]
+    days_since_last_start: int | None
+    avg_pitch_count_last_3: float | None
+    max_pitch_count_last_5: int | None
+    pitch_count_trend: str
+    pitch_count_trend_delta: float | None
+    outs_trend: str
+    outs_trend_delta: float | None
+    pitch_count_volatility_last_5: float | None
+    outs_volatility_last_5: float | None
+    short_starts_last_5: int
+    shadow_pitch_budget: float | None
+    shadow_projected_batters_faced: float | None
+    shadow_projected_outs: float | None
+    opportunity_confidence: str
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Candidate:
     subject_name: str
     subject_id: int | None
@@ -157,6 +184,7 @@ class Candidate:
     opponent_outs_factor: float | None = None
     park_run_factor: float | None = None
     moneyline: int | None = None
+    opportunity_shadow: OpportunityShadow | None = None
 
 
 @dataclass
@@ -196,6 +224,7 @@ class StarterAssessment:
     shortlist_status: str | None = None
     shortlist_reason: str | None = None
     flags: list[str] = field(default_factory=list)
+    opportunity_shadow: OpportunityShadow | None = None
 
 
 @dataclass

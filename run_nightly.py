@@ -21,6 +21,7 @@ from mlb_props.tiers import candidate_tier
 from mlb_props.version import (
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
+    PITCHER_OPPORTUNITY_SHADOW_VERSION,
     PITCHER_TIER_POLICY_VERSION,
 )
 
@@ -355,6 +356,7 @@ def main() -> int:
                 "mode": "screen",
                 "history_schema_version": PITCHER_HISTORY_SCHEMA_VERSION,
                 "model_version": PITCHER_MODEL_VERSION,
+                "shadow_feature_version": PITCHER_OPPORTUNITY_SHADOW_VERSION,
                 "tier_policy_version": PITCHER_TIER_POLICY_VERSION,
                 "screen_date": settings.screen_date.isoformat(),
                 "exported_at": datetime.now(timezone.utc).isoformat(),

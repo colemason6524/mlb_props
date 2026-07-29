@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import fields
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -59,6 +61,72 @@ class ProjectionEdgeTests(unittest.TestCase):
         self.assertEqual(backtest._projection_edge_band(1.25), "1.25-1.49")
         self.assertEqual(backtest._projection_edge_band(1.5), "1.50-1.99")
         self.assertEqual(backtest._projection_edge_band(2.0), "2.0+")
+
+
+class OpportunityShadowCompatibilityTests(unittest.TestCase):
+    def test_legacy_prediction_without_shadow_data_is_supported(self) -> None:
+        self.assertEqual(
+            backtest._opportunity_shadow_from_prediction(
+                {"subject_name": "Legacy Pitcher"}
+            ),
+            {},
+        )
+
+    def test_nested_shadow_profile_is_loaded(self) -> None:
+        profile = {
+            "shadow_projected_outs": 17.2,
+            "opportunity_confidence": "MEDIUM",
+        }
+        self.assertEqual(
+            backtest._opportunity_shadow_from_prediction(
+                {"opportunity_shadow": profile}
+            ),
+            profile,
+        )
+
+    def test_shadow_report_compares_current_and_experimental_error(self) -> None:
+        values = {field.name: None for field in fields(backtest.ResolvedPrediction)}
+        values.update(
+            {
+                "screen_date": date(2026, 7, 10),
+                "tier": "watch",
+                "model_version": "test",
+                "history_schema_version": 3,
+                "pitcher_name": "Test Pitcher",
+                "team": "DET",
+                "opponent": "KC",
+                "prop_type": "PITCHER_STRIKEOUTS",
+                "side": "OVER",
+                "line": 5.5,
+                "score": 2,
+                "flags": [],
+                "actual": 6.0,
+                "actual_outs": 15,
+                "actual_pitches": 90,
+                "actual_batters_faced": 24,
+                "projected_outs": 18.0,
+                "projected_batters_faced": 26.0,
+                "shadow_pitch_budget": 95.0,
+                "shadow_projected_outs": 16.0,
+                "shadow_projected_batters_faced": 24.5,
+                "opportunity_confidence": "HIGH",
+                "opportunity_flags": ["STABLE_ROLE"],
+                "outcome": "win",
+            }
+        )
+        row = backtest.ResolvedPrediction(**values)
+
+        rendered = "\n".join(
+            backtest._render_shadow_opportunity_diagnostics(
+                [row],
+                min_flag_samples=1,
+            )
+        )
+
+        self.assertIn("Outs MAE, current vs shadow: 3.00 vs 1.00 (-2.00)", rendered)
+        self.assertIn("BF MAE, current vs shadow: 2.00 vs 0.50 (-1.50)", rendered)
+        self.assertIn("HIGH: 1 plays", rendered)
+        self.assertIn("STABLE_ROLE: 1 plays", rendered)
 
 
 if __name__ == "__main__":

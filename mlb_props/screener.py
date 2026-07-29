@@ -7,7 +7,16 @@ from statistics import mean, median, pstdev
 from types import SimpleNamespace
 
 from .config import PITCHER_OUTS_RECORDED, PITCHER_STRIKEOUTS, Settings
-from .models import Candidate, MatchupContext, PitcherGameLog, PropLine, ScreeningResult, StarterAssessment
+from .models import (
+    Candidate,
+    MatchupContext,
+    OpportunityShadow,
+    PitcherGameLog,
+    PropLine,
+    ScreeningResult,
+    StarterAssessment,
+)
+from .opportunity import build_opportunity_shadow
 from .tiers import core_block_reasons
 from .utils import normalize_name
 
@@ -52,7 +61,9 @@ def screen_pitcher_props(
             continue
 
         pitcher_key = normalize_name(line.subject_name_raw)
-        logs = [log for log in logs_by_pitcher.get(pitcher_key, []) if log.did_start]
+        raw_logs = logs_by_pitcher.get(pitcher_key, [])
+        logs = [log for log in raw_logs if log.did_start]
+        opportunity_shadow = build_opportunity_shadow(raw_logs, line.game_date)
         evaluated_prop_lines += 1
         if len(logs) < settings.thresholds.min_starts:
             non_qualifying_prop_lines += 1
@@ -135,6 +146,7 @@ def screen_pitcher_props(
             projected_batters_faced=projected_batters_faced,
             projected_k_rate=projected_k_rate,
             projected_strikeouts=projected_strikeouts,
+            opportunity_shadow=opportunity_shadow,
         )
         if line_candidates:
             candidates.extend(line_candidates)
@@ -183,6 +195,7 @@ def _build_candidates(
     projected_batters_faced: float,
     projected_k_rate: float,
     projected_strikeouts: float,
+    opportunity_shadow: OpportunityShadow,
 ) -> list[Candidate]:
     effective_delta_last_5 = delta_avg_last_5
     effective_delta_last_10 = delta_avg_last_10
@@ -293,6 +306,7 @@ def _build_candidates(
                 opponent_outs_factor=getattr(matchup_context, "opponent_outs_factor", None),
                 park_run_factor=getattr(matchup_context, "park_run_factor", None),
                 moneyline=getattr(matchup_context, "moneyline", None),
+                opportunity_shadow=opportunity_shadow,
             )
         )
     return candidates
@@ -805,7 +819,9 @@ def build_daily_starter_board(
             if pitcher_key in seen:
                 continue
             seen.add(pitcher_key)
-            logs = [log for log in logs_by_pitcher.get(pitcher_key, []) if log.did_start]
+            raw_logs = logs_by_pitcher.get(pitcher_key, [])
+            logs = [log for log in raw_logs if log.did_start]
+            opportunity_shadow = build_opportunity_shadow(raw_logs, game.game_date)
             if not logs:
                 strikeout_line = strikeout_lines.get((team, pitcher_key))
                 assessments.append(
@@ -842,6 +858,7 @@ def build_daily_starter_board(
                         shortlist_status="NoData" if strikeout_line else "NoLine",
                         shortlist_reason="No usable starter logs" if strikeout_line else "No posted strikeout line",
                         flags=["THIN"],
+                        opportunity_shadow=opportunity_shadow,
                     )
                 )
                 continue
@@ -1005,6 +1022,7 @@ def build_daily_starter_board(
                         matchup_rating_ks=matchup_rating_ks,
                         matchup_rating_outs=matchup_rating_outs,
                     ),
+                    opportunity_shadow=opportunity_shadow,
                 )
             )
     return sorted(

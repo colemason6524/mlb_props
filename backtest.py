@@ -54,6 +54,11 @@ class ResolvedPrediction:
     projected_batters_faced: float | None
     projected_k_rate: float | None
     projected_strikeouts: float | None
+    shadow_pitch_budget: float | None
+    shadow_projected_outs: float | None
+    shadow_projected_batters_faced: float | None
+    opportunity_confidence: str | None
+    opportunity_flags: list[str]
     avg_pitch_count_last_5: float | None
     avg_outs_last_5: float | None
     avg_k_rate_last_5: float | None
@@ -351,6 +356,11 @@ def _safe_float(value: object) -> float | None:
         return None
 
 
+def _opportunity_shadow_from_prediction(prediction: dict) -> dict:
+    shadow = prediction.get("opportunity_shadow")
+    return shadow if isinstance(shadow, dict) else {}
+
+
 def _classify_miss_type(prediction: dict, log: PitcherGameLog, outcome: str) -> str | None:
     if outcome != "loss":
         return None
@@ -512,6 +522,7 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
             continue
         actual = float(matching_log.strikeouts)
         outcome, edge = _resolve_outcome(prediction["side"], float(prediction["line"]), actual)
+        opportunity_shadow = _opportunity_shadow_from_prediction(prediction)
         resolved.append(
             ResolvedPrediction(
                 screen_date=screen_date,
@@ -540,6 +551,19 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                 projected_batters_faced=_safe_float(prediction.get("projected_batters_faced")),
                 projected_k_rate=_safe_float(prediction.get("projected_k_rate")),
                 projected_strikeouts=_safe_float(prediction.get("projected_strikeouts")),
+                shadow_pitch_budget=_safe_float(opportunity_shadow.get("shadow_pitch_budget")),
+                shadow_projected_outs=_safe_float(
+                    opportunity_shadow.get("shadow_projected_outs")
+                ),
+                shadow_projected_batters_faced=_safe_float(
+                    opportunity_shadow.get("shadow_projected_batters_faced")
+                ),
+                opportunity_confidence=(
+                    str(opportunity_shadow["opportunity_confidence"])
+                    if opportunity_shadow.get("opportunity_confidence")
+                    else None
+                ),
+                opportunity_flags=list(opportunity_shadow.get("flags") or []),
                 avg_pitch_count_last_5=_safe_float(prediction.get("avg_pitch_count_last_5")),
                 avg_outs_last_5=_safe_float(prediction.get("avg_outs_last_5")),
                 avg_k_rate_last_5=_safe_float(prediction.get("avg_k_rate_last_5")),
@@ -820,6 +844,128 @@ def _render_projection_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
     return lines
 
 
+def _render_shadow_opportunity_diagnostics(
+    rows: list[ResolvedPrediction],
+    min_flag_samples: int = 5,
+) -> list[str]:
+    shadow_rows = [
+        row
+        for row in rows
+        if row.shadow_projected_outs is not None
+        and row.shadow_projected_batters_faced is not None
+    ]
+    if not shadow_rows:
+        return []
+
+    lines = ["Shadow opportunity diagnostics:"]
+    lines.append(f"- Graded shadow profiles: {len(shadow_rows)}")
+
+    matched_outs = [row for row in shadow_rows if row.projected_outs is not None]
+    if matched_outs:
+        current_outs_mae = mean(
+            abs(row.actual_outs - row.projected_outs) for row in matched_outs
+        )
+        shadow_outs_errors = [
+            row.actual_outs - row.shadow_projected_outs for row in matched_outs
+        ]
+        shadow_outs_mae = mean(abs(error) for error in shadow_outs_errors)
+        lines.append(
+            f"- Outs MAE, current vs shadow: {current_outs_mae:.2f} vs "
+            f"{shadow_outs_mae:.2f} ({shadow_outs_mae - current_outs_mae:+.2f})"
+        )
+        lines.append(
+            f"- Shadow outs bias (actual minus projected): "
+            f"{mean(shadow_outs_errors):+.2f}"
+        )
+
+    matched_bf = [
+        row for row in shadow_rows if row.projected_batters_faced is not None
+    ]
+    if matched_bf:
+        current_bf_mae = mean(
+            abs(row.actual_batters_faced - row.projected_batters_faced)
+            for row in matched_bf
+        )
+        shadow_bf_errors = [
+            row.actual_batters_faced - row.shadow_projected_batters_faced
+            for row in matched_bf
+        ]
+        shadow_bf_mae = mean(abs(error) for error in shadow_bf_errors)
+        lines.append(
+            f"- BF MAE, current vs shadow: {current_bf_mae:.2f} vs "
+            f"{shadow_bf_mae:.2f} ({shadow_bf_mae - current_bf_mae:+.2f})"
+        )
+        lines.append(
+            f"- Shadow BF bias (actual minus projected): {mean(shadow_bf_errors):+.2f}"
+        )
+
+    pitch_rows = [row for row in shadow_rows if row.shadow_pitch_budget is not None]
+    if pitch_rows:
+        pitch_errors = [
+            row.actual_pitches - row.shadow_pitch_budget for row in pitch_rows
+        ]
+        lines.append(
+            f"- Shadow pitch-budget MAE: "
+            f"{mean(abs(error) for error in pitch_errors):.2f}"
+        )
+        lines.append(
+            f"- Shadow pitch-budget bias (actual minus projected): "
+            f"{mean(pitch_errors):+.2f}"
+        )
+
+    by_confidence: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in shadow_rows:
+        by_confidence[row.opportunity_confidence or "UNKNOWN"].append(row)
+    lines.append("- Confidence groups:")
+    for confidence in ("HIGH", "MEDIUM", "LOW", "UNKNOWN"):
+        confidence_rows = by_confidence.get(confidence)
+        if not confidence_rows:
+            continue
+        outs_mae = mean(
+            abs(row.actual_outs - row.shadow_projected_outs)
+            for row in confidence_rows
+        )
+        short_rate = (
+            sum(1 for row in confidence_rows if row.actual_outs < 15)
+            / len(confidence_rows)
+            * 100
+        )
+        lines.append(
+            f"  {confidence}: {len(confidence_rows)} plays, "
+            f"shadow outs MAE {outs_mae:.2f}, short-outing rate {short_rate:.1f}%"
+        )
+
+    flags_to_rows: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in shadow_rows:
+        for flag in row.opportunity_flags:
+            flags_to_rows[flag].append(row)
+    eligible_flags = [
+        (flag, flag_rows)
+        for flag, flag_rows in flags_to_rows.items()
+        if len(flag_rows) >= min_flag_samples
+    ]
+    if eligible_flags:
+        lines.append(f"- Shadow flags (min {min_flag_samples} samples):")
+        for flag, flag_rows in sorted(
+            eligible_flags,
+            key=lambda item: (-len(item[1]), item[0]),
+        )[:12]:
+            short_rate = (
+                sum(1 for row in flag_rows if row.actual_outs < 15)
+                / len(flag_rows)
+                * 100
+            )
+            outs_mae = mean(
+                abs(row.actual_outs - row.shadow_projected_outs)
+                for row in flag_rows
+            )
+            lines.append(
+                f"  {flag}: {len(flag_rows)} plays, "
+                f"short-outing rate {short_rate:.1f}%, shadow outs MAE {outs_mae:.2f}"
+            )
+    return lines
+
+
 def _render_loss_review(rows: list[ResolvedPrediction], max_rows: int = 12) -> list[str]:
     losses = [row for row in rows if row.outcome == "loss"]
     lines = ["Loss review:"]
@@ -1000,6 +1146,10 @@ def main() -> int:
         lines.append("")
         lines.extend(_render_projection_diagnostics(resolved))
         lines.append("")
+        shadow_lines = _render_shadow_opportunity_diagnostics(resolved)
+        if shadow_lines:
+            lines.extend(shadow_lines)
+            lines.append("")
         lines.extend(_render_postgame_diagnostics(resolved))
         lines.append("")
         lines.extend(_render_resolution_methods(resolved))
