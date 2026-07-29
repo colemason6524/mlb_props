@@ -9,6 +9,7 @@ from pathlib import Path
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
 from mlb_props.hot_hits import screen_hot_hitters
+from mlb_props.hot_hits_policy import hot_hit_tier, select_hot_hits_card
 from mlb_props.notifiers.discord import send_discord_embeds
 from mlb_props.output import render_hot_hit_candidates, render_hot_hits_discord_embeds
 from mlb_props.sources.mlb_stats_api import (
@@ -29,6 +30,17 @@ def export_hot_hits_history(payload: dict) -> Path:
 
 def discord_notifications_enabled() -> bool:
     return os.environ.get("SEND_DISCORD", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _history_selection_item(candidate, rank: int) -> dict:
+    return {
+        "rank": rank,
+        "batter_id": candidate.batter_id,
+        "batter_name": candidate.batter_name,
+        "team": candidate.team,
+        "score": candidate.score,
+        "tier": hot_hit_tier(candidate),
+    }
 
 
 def main() -> int:
@@ -78,6 +90,15 @@ def main() -> int:
     print(f"- Batters with logs: {sum(1 for logs in logs_by_batter.values() if logs)}")
     print(f"- Qualified candidates: {len(candidates)}")
 
+    card_settings = settings.hot_hits_thresholds
+    discord_selection = select_hot_hits_card(
+        candidates,
+        card_policy=card_settings.discord_card_policy,
+        limit=card_settings.discord_core_limit,
+        value_limit=card_settings.discord_value_limit,
+        min_score=card_settings.discord_min_score,
+    )
+    discord_status = "not_requested"
     if discord_notifications_enabled():
         webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
         embeds = render_hot_hits_discord_embeds(
@@ -85,13 +106,17 @@ def main() -> int:
             screen_date=settings.screen_date.isoformat(),
             games_count=len(games),
             checked_count=len(projected_batters),
-            limit=min(settings.display_limit, 6),
-            min_score=settings.hot_hits_thresholds.discord_min_score,
+            limit=card_settings.discord_core_limit,
+            min_score=card_settings.discord_min_score,
+            card_policy=card_settings.discord_card_policy,
+            value_limit=card_settings.discord_value_limit,
         )
         result = send_discord_embeds(webhook_url, embeds)
         if result.ok:
+            discord_status = "sent"
             print("- Discord notification: sent")
         else:
+            discord_status = "failed"
             print(f"- Discord notification: failed ({result.error or result.status_code})")
 
     if settings.export_history:
@@ -103,6 +128,33 @@ def main() -> int:
                 "settings": {
                     "display_limit": settings.display_limit,
                     "hot_hits_thresholds": asdict(settings.hot_hits_thresholds),
+                },
+                "discord_delivery": {
+                    "status": discord_status,
+                    "policy_version": card_settings.discord_card_policy,
+                    "core_limit": card_settings.discord_core_limit,
+                    "value_limit": card_settings.discord_value_limit,
+                    "min_score": card_settings.discord_min_score,
+                    "core": [
+                        _history_selection_item(candidate, rank)
+                        for rank, candidate in enumerate(discord_selection.core, start=1)
+                    ],
+                    "optional_value": [
+                        _history_selection_item(
+                            candidate,
+                            len(discord_selection.core) + rank,
+                        )
+                        for rank, candidate in enumerate(discord_selection.value, start=1)
+                    ],
+                    "thin": [
+                        _history_selection_item(
+                            candidate,
+                            len(discord_selection.core)
+                            + len(discord_selection.value)
+                            + rank,
+                        )
+                        for rank, candidate in enumerate(discord_selection.thin, start=1)
+                    ],
                 },
             }
         )

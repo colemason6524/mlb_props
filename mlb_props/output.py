@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from .hot_hits_policy import (
+    CORE_FIRST_POLICY_VERSION,
+    HOT_HITS_POLICY_VERSION,
+    hot_hit_discord_eligible as policy_hot_hit_discord_eligible,
+    hot_hit_discord_sort_key as policy_hot_hit_discord_sort_key,
+    hot_hit_support_count as policy_hot_hit_support_count,
+    hot_hit_tier as policy_hot_hit_tier,
+    select_hot_hits_card,
+)
 from .models import Candidate, HotHitCandidate, StarterAssessment
 from .tiers import candidate_tier
 
@@ -422,22 +431,40 @@ def render_hot_hits_discord_embeds(
     screen_date,
     games_count: int,
     checked_count: int,
-    limit: int = 8,
+    limit: int = 4,
     min_score: int = 10,
+    card_policy: str = CORE_FIRST_POLICY_VERSION,
+    value_limit: int = 2,
 ) -> list[dict]:
     items = list(candidates)
-    eligible = [item for item in items if _hot_hit_discord_eligible(item, min_score)]
-    eligible = sorted(eligible, key=_hot_hit_discord_sort_key, reverse=True)
-    core = [item for item in eligible if _hot_hit_tier(item) == "Core"]
-    value = [item for item in eligible if _hot_hit_tier(item) == "Value"]
-    thin = [item for item in eligible if _hot_hit_tier(item) == "Thin"]
-    shown_core = core[:limit]
-    shown_value = value[: max(0, limit - len(shown_core))]
-    shown_thin = thin[: max(0, limit - len(shown_core) - len(shown_value))]
-    shown = shown_core + shown_value + shown_thin
+    selection = select_hot_hits_card(
+        items,
+        card_policy=card_policy,
+        limit=limit,
+        value_limit=value_limit,
+        min_score=min_score,
+    )
+    if card_policy == HOT_HITS_POLICY_VERSION:
+        return _render_legacy_hot_hits_discord_embed(
+            items=items,
+            selection=selection,
+            screen_date=screen_date,
+            games_count=games_count,
+            checked_count=checked_count,
+            min_score=min_score,
+        )
+    shown_core = selection.core
+    shown_value = selection.value
+    shown = selection.shown
+    if shown_core:
+        core_label = "leg" if len(shown_core) == 1 else "legs"
+        recommendation = f"**{len(shown_core)} Core {core_label}**"
+    else:
+        recommendation = "**No Core play today**"
     description = (
         f"{len(items)} qualified from {checked_count} likely bats across {games_count} games.\n"
-        f"Core: safer hit profile. Value: hot hand with potentially softer market profile. Thin: needs price/lineup help."
+        f"Recommended card: {recommendation}. "
+        "Only Core names belong in the recommended parlay."
     )
     embed = {
         "title": f"MLB Hot Hits - {screen_date}",
@@ -447,6 +474,80 @@ def render_hot_hits_discord_embeds(
         "footer": {"text": "Confirm lineup spot before locking. Odds are a mental model here, not pulled into scoring."},
     }
 
+    if not shown_core:
+        embed["fields"].append(
+            {
+                "name": "Core Card",
+                "value": "No Core plays qualified today. Do not force a recommended parlay.",
+                "inline": False,
+            }
+        )
+
+    for index, item in enumerate(shown_core, start=1):
+        embed["fields"].append(
+            {
+                "name": f"Core Card {index} | {item.batter_name} ({item.team}) - Score {item.score}",
+                "value": _hot_hit_embed_value(item),
+                "inline": False,
+            }
+        )
+
+    if shown_value:
+        embed["fields"].append(
+            {
+                "name": "⚠️ Optional Value — Higher Risk",
+                "value": (
+                    "Not part of the recommended Core card. These are fallback research plays only. "
+                    "**Play at your own risk.**"
+                ),
+                "inline": False,
+            }
+        )
+
+    for item in shown_value:
+        embed["fields"].append(
+            {
+                "name": f"Optional Value | {item.batter_name} ({item.team}) - Score {item.score}",
+                "value": _hot_hit_embed_value(item),
+                "inline": False,
+            }
+        )
+
+    if not shown:
+        embed["fields"].append(
+            {
+                "name": "Optional Value",
+                "value": f"No supported Value fallback cleared the profile cutoff of {min_score}.",
+                "inline": False,
+            }
+        )
+
+    return [embed]
+
+
+def _render_legacy_hot_hits_discord_embed(
+    *,
+    items: list[HotHitCandidate],
+    selection,
+    screen_date,
+    games_count: int,
+    checked_count: int,
+    min_score: int,
+) -> list[dict]:
+    shown = selection.shown
+    embed = {
+        "title": f"MLB Hot Hits - {screen_date}",
+        "description": (
+            f"{len(items)} qualified from {checked_count} likely bats across {games_count} games.\n"
+            "Core: safer hit profile. Value: supported hot hand. "
+            "Thin: needs lineup and context help."
+        ),
+        "color": _hot_hits_embed_color(shown),
+        "fields": [],
+        "footer": {
+            "text": "Confirm lineup spot before locking. Odds are a mental model here, not pulled into scoring."
+        },
+    }
     if not shown:
         embed["fields"].append(
             {
@@ -457,87 +558,36 @@ def render_hot_hits_discord_embeds(
         )
         return [embed]
 
-    for item in shown_core:
-        embed["fields"].append(
-            {
-                "name": f"Core | {item.batter_name} ({item.team}) - Score {item.score}",
-                "value": _hot_hit_embed_value(item),
-                "inline": False,
-            }
-        )
-
-    for item in shown_value:
-        embed["fields"].append(
-            {
-                "name": f"Value | {item.batter_name} ({item.team}) - Score {item.score}",
-                "value": _hot_hit_embed_value(item),
-                "inline": False,
-            }
-        )
-
-    for item in shown_thin:
-        embed["fields"].append(
-            {
-                "name": f"Thin | {item.batter_name} ({item.team}) - Score {item.score}",
-                "value": _hot_hit_embed_value(item),
-                "inline": False,
-            }
-        )
-
+    for tier_name, candidates in (
+        ("Core", selection.core),
+        ("Value", selection.value),
+        ("Thin", selection.thin),
+    ):
+        for item in candidates:
+            embed["fields"].append(
+                {
+                    "name": f"{tier_name} | {item.batter_name} ({item.team}) - Score {item.score}",
+                    "value": _hot_hit_embed_value(item),
+                    "inline": False,
+                }
+            )
     return [embed]
 
 
 def _hot_hit_tier(item: HotHitCandidate) -> str:
-    batting_order = item.batting_order or 99
-    low_order = batting_order >= 8
-    value_order = 5 <= batting_order <= 7
-    matchup_floor = item.matchup_rating > -0.20
-    strong_contact_spot = item.pitcher_hits_allowed_rate_last_5 >= 0.280 or item.matchup_rating >= 0.20
-    hot_hand = item.avg_last_5 >= 0.400 or item.hit_games_last_5 >= 5
-    support_count = _hot_hit_support_count(item)
-
-    if item.score >= 14 and batting_order <= 4 and matchup_floor and support_count >= 2:
-        return "Core"
-    if item.score >= 12 and hot_hand and matchup_floor and not low_order and support_count >= 2:
-        return "Value"
-    if item.score >= 11 and value_order and hot_hand and strong_contact_spot and support_count >= 2:
-        return "Value"
-    return "Thin"
+    return policy_hot_hit_tier(item)
 
 
 def _hot_hit_discord_eligible(item: HotHitCandidate, min_score: int) -> bool:
-    batting_order = item.batting_order or 99
-    support_count = _hot_hit_support_count(item)
-    if item.score >= 14 and support_count >= 1 and batting_order <= 7:
-        return True
-    if item.score >= max(min_score, 12) and support_count >= 2 and batting_order <= 7:
-        return True
-    return False
+    return policy_hot_hit_discord_eligible(item, min_score=min_score)
 
 
 def _hot_hit_support_count(item: HotHitCandidate) -> int:
-    return sum(
-        [
-            bool(item.batting_order is not None and item.batting_order <= 4),
-            item.matchup_rating >= 0.20,
-            item.pitcher_hits_allowed_rate_last_5 >= 0.260,
-            item.season_avg >= 0.280,
-            item.avg_last_5 >= 0.380,
-        ]
-    )
+    return policy_hot_hit_support_count(item)
 
 
 def _hot_hit_discord_sort_key(item: HotHitCandidate) -> tuple[int, int, int, float, float, float, int]:
-    batting_order = item.batting_order or 99
-    return (
-        _hot_hit_support_count(item),
-        item.score,
-        1 if batting_order <= 4 else 0,
-        item.matchup_rating,
-        item.pitcher_hits_allowed_rate_last_5,
-        item.season_avg,
-        -batting_order,
-    )
+    return policy_hot_hit_discord_sort_key(item)
 
 
 def _hot_hit_embed_value(item: HotHitCandidate) -> str:

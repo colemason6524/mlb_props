@@ -15,14 +15,32 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from mlb_props.config import OUTPUTS_DIR
+from mlb_props.hot_hits_policy import (
+    CORE_FIRST_POLICY_VERSION,
+    HOT_HITS_POLICY_VERSION,
+    HotHitPolicySnapshot,
+    HotHitScoringInput,
+    hot_hit_discord_eligible as policy_hot_hit_discord_eligible,
+    hot_hit_discord_sort_key as policy_hot_hit_discord_sort_key,
+    hot_hit_support_count as policy_hot_hit_support_count,
+    hot_hit_tier as policy_hot_hit_tier,
+    score_hot_hit_candidate,
+    select_core_first_hot_hits_card,
+    select_current_hot_hits_card,
+)
+
+DELIVERED_CARD_POLICY = "delivered"
 
 
 @dataclass
 class GradedHotHit:
     date: str
     rank: int
+    discord_rank: int | None
+    discord_role: str | None
     batter_name: str
     team: str
+    original_score: int
     score: int
     tier: str
     batting_order: int | None
@@ -30,9 +48,11 @@ class GradedHotHit:
     avg_last_10: float
     season_avg: float
     hit_games_last_5: int
+    hit_games_last_10: int
     matchup_rating: float
     pitcher_hits_allowed_rate_last_5: float
     pitcher_k_rate_last_5: float
+    pitcher_walk_rate_last_5: float
     batter_vs_pitcher_ab: int | None
     batter_vs_pitcher_avg: float | None
     discord_sim: bool
@@ -52,7 +72,26 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--history-dir", type=Path, default=OUTPUTS_DIR / "history")
     parser.add_argument("--since", help="First screen date to include, YYYY-MM-DD.")
     parser.add_argument("--through", help="Last screen date to include, YYYY-MM-DD.")
-    parser.add_argument("--limit", type=int, default=6, help="Simulated Discord card size.")
+    parser.add_argument("--limit", type=int, default=4, help="Core limit or legacy card size.")
+    parser.add_argument(
+        "--card-policy",
+        choices=[
+            CORE_FIRST_POLICY_VERSION,
+            HOT_HITS_POLICY_VERSION,
+            DELIVERED_CARD_POLICY,
+        ],
+        default=CORE_FIRST_POLICY_VERSION,
+        help=(
+            "Discord selection policy to grade. 'delivered' uses exact successfully sent "
+            "selection metadata available in newer exports."
+        ),
+    )
+    parser.add_argument(
+        "--value-limit",
+        type=int,
+        default=2,
+        help="Maximum risky Value fallbacks for the Core-first policy.",
+    )
     parser.add_argument("--output", type=Path, help="Optional path to write the report text.")
     parser.add_argument("--json-output", type=Path, help="Optional path to write graded rows as JSON.")
     parser.add_argument(
@@ -70,7 +109,14 @@ def main() -> int:
         print("No hot_hits_*.json history files found.")
         return 1
 
-    rows = grade_history_files(history_files, limit=args.limit)
+    rows = grade_history_files(
+        history_files,
+        limit=args.limit,
+        card_policy=args.card_policy,
+        value_limit=args.value_limit,
+        since=args.since,
+        through=args.through,
+    )
     rows = [
         row
         for row in rows
@@ -81,7 +127,11 @@ def main() -> int:
         print("No graded rows remain after date filtering.")
         return 1
 
-    report = render_report(rows, include_pending=args.include_pending)
+    report = render_report(
+        rows,
+        include_pending=args.include_pending,
+        card_policy=args.card_policy,
+    )
     print(report)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -98,41 +148,102 @@ def _resolve_history_files(args: argparse.Namespace) -> list[Path]:
         with zipfile.ZipFile(args.zip) as archive:
             archive.extractall(temp_dir)
         return sorted(temp_dir.rglob("hot_hits_*.json"))
-    return sorted(args.history_dir.glob("hot_hits_*.json"))
+    return sorted(args.history_dir.rglob("hot_hits_*.json"))
 
 
-def grade_history_files(paths: Iterable[Path], limit: int = 6) -> list[GradedHotHit]:
-    api = MlbStatsClient()
-    rows: list[dict] = []
+def _latest_history_payloads(paths: Iterable[Path]) -> list[dict]:
+    latest_by_date: dict[str, tuple[tuple[str, str], dict]] = {}
     for path in paths:
         payload = json.loads(path.read_text())
         screen_date = payload.get("screen_date")
         candidates = payload.get("candidates", [])
         if not screen_date or not isinstance(candidates, list):
             continue
+        recency_key = (str(payload.get("generated_at", "")), str(path))
+        existing = latest_by_date.get(screen_date)
+        if existing is None or recency_key > existing[0]:
+            latest_by_date[screen_date] = (recency_key, payload)
+    return [latest_by_date[screen_date][1] for screen_date in sorted(latest_by_date)]
+
+
+def grade_history_files(
+    paths: Iterable[Path],
+    limit: int = 4,
+    *,
+    card_policy: str = CORE_FIRST_POLICY_VERSION,
+    value_limit: int = 2,
+    since: str | None = None,
+    through: str | None = None,
+) -> list[GradedHotHit]:
+    api = MlbStatsClient()
+    rows: list[dict] = []
+    for payload in _latest_history_payloads(paths):
+        screen_date = payload["screen_date"]
+        if (since and screen_date < since) or (through and screen_date > through):
+            continue
+        candidates = payload["candidates"]
+        delivery = payload.get("discord_delivery") or {}
+        delivered_items: dict[tuple[str, str], tuple[int, str]] = {}
+        if delivery.get("status") == "sent":
+            for role, delivery_key in (
+                ("Core", "core"),
+                ("Value", "optional_value"),
+                ("Thin", "thin"),
+            ):
+                for delivered in delivery.get(delivery_key, []):
+                    delivered_key_value = _candidate_delivery_key(delivered)
+                    delivered_items[delivered_key_value] = (
+                        int(delivered.get("rank", 0) or 0),
+                        role,
+                    )
         for rank, candidate in enumerate(candidates, start=1):
             row = dict(candidate)
             row["date"] = screen_date
             row["rank"] = rank
+            row["original_score"] = int(row.get("score", 0) or 0)
             row["score"] = current_hot_hit_score(row)
             row.update(api.grade_batter(candidate, screen_date))
             row["tier"] = hot_hit_tier(row)
+            delivered_rank_role = delivered_items.get(_candidate_delivery_key(row))
+            row["_delivered_rank"] = (
+                delivered_rank_role[0] if delivered_rank_role else None
+            )
+            row["_delivered_role"] = (
+                delivered_rank_role[1] if delivered_rank_role else None
+            )
             rows.append(row)
 
-    discord_keys: set[tuple[str, int, str]] = set()
+    discord_ranks: dict[tuple[str, int, str], int] = {}
+    discord_roles: dict[tuple[str, int, str], str] = {}
     for screen_date in sorted({row["date"] for row in rows}):
         day_rows = [row for row in rows if row["date"] == screen_date]
-        for row in simulated_discord_card(day_rows, limit=limit):
-            discord_keys.add((row["date"], row["rank"], row.get("batter_name", "")))
+        selected = simulated_discord_card(
+            day_rows,
+            limit=limit,
+            card_policy=card_policy,
+            value_limit=value_limit,
+        )
+        for discord_rank, row in enumerate(selected, start=1):
+            key = (row["date"], row["rank"], row.get("batter_name", ""))
+            discord_ranks[key] = discord_rank
+            discord_roles[key] = (
+                row.get("_delivered_role")
+                or row.get("tier")
+                or "Thin"
+            )
 
     graded: list[GradedHotHit] = []
     for row in rows:
+        key = (row["date"], row["rank"], row.get("batter_name", ""))
         graded.append(
             GradedHotHit(
                 date=row["date"],
                 rank=int(row["rank"]),
+                discord_rank=discord_ranks.get(key),
+                discord_role=discord_roles.get(key),
                 batter_name=row.get("batter_name", ""),
                 team=row.get("team", ""),
+                original_score=int(row.get("original_score", 0) or 0),
                 score=int(row.get("score", 0) or 0),
                 tier=row["tier"],
                 batting_order=row.get("batting_order"),
@@ -140,14 +251,18 @@ def grade_history_files(paths: Iterable[Path], limit: int = 6) -> list[GradedHot
                 avg_last_10=float(row.get("avg_last_10", 0.0) or 0.0),
                 season_avg=float(row.get("season_avg", 0.0) or 0.0),
                 hit_games_last_5=int(row.get("hit_games_last_5", 0) or 0),
+                hit_games_last_10=int(row.get("hit_games_last_10", 0) or 0),
                 matchup_rating=float(row.get("matchup_rating", 0.0) or 0.0),
                 pitcher_hits_allowed_rate_last_5=float(
                     row.get("pitcher_hits_allowed_rate_last_5", 0.0) or 0.0
                 ),
                 pitcher_k_rate_last_5=float(row.get("pitcher_k_rate_last_5", 0.0) or 0.0),
+                pitcher_walk_rate_last_5=float(
+                    row.get("pitcher_walk_rate_last_5", 0.0) or 0.0
+                ),
                 batter_vs_pitcher_ab=row.get("batter_vs_pitcher_ab"),
                 batter_vs_pitcher_avg=row.get("batter_vs_pitcher_avg"),
-                discord_sim=(row["date"], row["rank"], row.get("batter_name", "")) in discord_keys,
+                discord_sim=key in discord_ranks,
                 result=row.get("result", "UNKNOWN"),
                 hits=row.get("hits"),
                 at_bats=row.get("at_bats"),
@@ -159,7 +274,6 @@ def grade_history_files(paths: Iterable[Path], limit: int = 6) -> list[GradedHot
 
 
 def current_hot_hit_score(row: dict) -> int:
-    score = 0
     avg_last_5 = float(row.get("avg_last_5", 0.0) or 0.0)
     avg_last_10 = float(row.get("avg_last_10", 0.0) or 0.0)
     season_avg = float(row.get("season_avg", 0.0) or 0.0)
@@ -179,140 +293,85 @@ def current_hot_hit_score(row: dict) -> int:
     bvp_avg = row.get("batter_vs_pitcher_avg")
     bvp_avg = float(bvp_avg) if bvp_avg is not None else None
 
-    if hit_games_last_5 >= 5:
-        score += 2
-    elif hit_games_last_5 >= 4:
-        score += 1
-
-    if hit_games_last_10 >= 8:
-        score += 2
-    elif hit_games_last_10 >= 7:
-        score += 1
-
-    score += 3 if avg_last_5 >= 0.400 else 2
-
-    if avg_last_10 >= 0.320:
-        score += 1
-    if season_avg >= 0.285:
-        score += 2
-    elif season_avg >= 0.260:
-        score += 1
-
-    if avg_last_5 - season_avg >= 0.080:
-        score += 1
-    elif avg_last_5 < season_avg:
-        score -= 1
-
-    if batting_order is not None and batting_order <= 4:
-        score += 1
-    elif batting_order is not None and 5 <= batting_order <= 7:
-        if matchup_rating < 0.0 and pitcher_hrate < 0.260:
-            score -= 1
-    elif batting_order is not None and batting_order >= 8:
-        score -= 2
-
-    if matchup_rating >= 0.20:
-        score += 3
-    elif matchup_rating <= -0.20:
-        score -= 2
-
-    if pitcher_hrate >= 0.280:
-        score += 2
-    elif pitcher_hrate >= 0.260:
-        score += 1
-    elif pitcher_hrate <= 0.220 and pitcher_has_data:
-        score -= 1
-
-    if pitcher_krate <= 0.200 and pitcher_has_data:
-        score += 1
-    elif pitcher_krate >= 0.285:
-        score -= 1
-
-    if pitcher_wrate >= 0.095:
-        score -= 1
-
-    if bvp_ab >= 8 and (bvp_avg or 0.0) >= 0.300:
-        score += 1
-    elif bvp_ab >= 8 and (bvp_avg or 0.0) <= 0.180:
-        score -= 1
-
-    return score
+    result = score_hot_hit_candidate(
+        HotHitScoringInput(
+            avg_last_5=avg_last_5,
+            avg_last_10=avg_last_10,
+            season_avg=season_avg,
+            hit_games_last_5=hit_games_last_5,
+            hit_games_last_10=hit_games_last_10,
+            batting_order=batting_order,
+            matchup_rating=matchup_rating,
+            pitcher_hits_allowed_rate_last_5=pitcher_hrate,
+            pitcher_k_rate_last_5=pitcher_krate,
+            pitcher_walk_rate_last_5=pitcher_wrate,
+            pitcher_has_data=pitcher_has_data,
+            batter_vs_pitcher_ab=bvp_ab,
+            batter_vs_pitcher_avg=bvp_avg,
+            batter_vs_pitcher_available=bvp_ab > 0 or bvp_avg is not None,
+        )
+    )
+    return result.score
 
 
 def hot_hit_tier(row: dict) -> str:
-    batting_order = row.get("batting_order") or 99
-    matchup_rating = float(row.get("matchup_rating", 0.0) or 0.0)
-    pitcher_hrate = float(row.get("pitcher_hits_allowed_rate_last_5", 0.0) or 0.0)
-    avg_last_5 = float(row.get("avg_last_5", 0.0) or 0.0)
-    hit_games_last_5 = int(row.get("hit_games_last_5", 0) or 0)
-    score = int(row.get("score", 0) or 0)
-
-    low_order = batting_order >= 8
-    value_order = 5 <= batting_order <= 7
-    matchup_floor = matchup_rating > -0.20
-    strong_contact_spot = pitcher_hrate >= 0.280 or matchup_rating >= 0.20
-    hot_hand = avg_last_5 >= 0.400 or hit_games_last_5 >= 5
-    support_count = hot_hit_support_count(row)
-
-    if score >= 14 and batting_order <= 4 and matchup_floor and support_count >= 2:
-        return "Core"
-    if score >= 12 and hot_hand and matchup_floor and not low_order and support_count >= 2:
-        return "Value"
-    if score >= 11 and value_order and hot_hand and strong_contact_spot and support_count >= 2:
-        return "Value"
-    return "Thin"
+    return policy_hot_hit_tier(HotHitPolicySnapshot.from_mapping(row))
 
 
 def hot_hit_discord_eligible(row: dict, min_score: int = 10) -> bool:
-    batting_order = row.get("batting_order") or 99
-    score = int(row.get("score", 0) or 0)
-    support_count = hot_hit_support_count(row)
-    if score >= 14 and support_count >= 1 and batting_order <= 7:
-        return True
-    if score >= max(min_score, 12) and support_count >= 2 and batting_order <= 7:
-        return True
-    return False
+    return policy_hot_hit_discord_eligible(
+        HotHitPolicySnapshot.from_mapping(row),
+        min_score=min_score,
+    )
 
 
 def hot_hit_support_count(row: dict) -> int:
-    batting_order = row.get("batting_order")
-    matchup_rating = float(row.get("matchup_rating", 0.0) or 0.0)
-    pitcher_hrate = float(row.get("pitcher_hits_allowed_rate_last_5", 0.0) or 0.0)
-    avg_last_5 = float(row.get("avg_last_5", 0.0) or 0.0)
-    season_avg = float(row.get("season_avg", 0.0) or 0.0)
-    return sum(
-        [
-            bool(batting_order is not None and batting_order <= 4),
-            matchup_rating >= 0.20,
-            pitcher_hrate >= 0.260,
-            season_avg >= 0.280,
-            avg_last_5 >= 0.380,
-        ]
-    )
+    return policy_hot_hit_support_count(HotHitPolicySnapshot.from_mapping(row))
 
 
 def hot_hit_discord_sort_key(row: dict) -> tuple[int, int, int, float, float, float, int]:
-    batting_order = row.get("batting_order") or 99
+    return policy_hot_hit_discord_sort_key(HotHitPolicySnapshot.from_mapping(row))
+
+
+def simulated_discord_card(
+    rows: list[dict],
+    limit: int = 4,
+    *,
+    card_policy: str = CORE_FIRST_POLICY_VERSION,
+    value_limit: int = 2,
+) -> list[dict]:
+    if card_policy == DELIVERED_CARD_POLICY:
+        return sorted(
+            [row for row in rows if row.get("_delivered_rank") is not None],
+            key=lambda row: int(row["_delivered_rank"]),
+        )
+    snapshots = [(HotHitPolicySnapshot.from_mapping(row), row) for row in rows]
+    rows_by_snapshot_id = {id(snapshot): row for snapshot, row in snapshots}
+    policy_candidates = [snapshot for snapshot, _ in snapshots]
+    if card_policy == CORE_FIRST_POLICY_VERSION:
+        selection = select_core_first_hot_hits_card(
+            policy_candidates,
+            core_limit=limit,
+            value_limit=value_limit,
+            min_score=10,
+        )
+    else:
+        selection = select_current_hot_hits_card(
+            policy_candidates,
+            limit=limit,
+            min_score=10,
+        )
+    return [rows_by_snapshot_id[id(snapshot)] for snapshot in selection.shown]
+
+
+def _candidate_delivery_key(candidate: dict) -> tuple[str, str]:
+    batter_id = candidate.get("batter_id")
+    if batter_id not in {None, ""}:
+        return ("id", str(batter_id))
     return (
-        hot_hit_support_count(row),
-        int(row.get("score", 0) or 0),
-        1 if batting_order <= 4 else 0,
-        float(row.get("matchup_rating", 0.0) or 0.0),
-        float(row.get("pitcher_hits_allowed_rate_last_5", 0.0) or 0.0),
-        float(row.get("season_avg", 0.0) or 0.0),
-        -batting_order,
+        "name",
+        f"{candidate.get('batter_name', '')}|{candidate.get('team', '')}".casefold(),
     )
-
-
-def simulated_discord_card(rows: list[dict], limit: int = 6) -> list[dict]:
-    eligible = [row for row in rows if hot_hit_discord_eligible(row)]
-    eligible = sorted(eligible, key=hot_hit_discord_sort_key, reverse=True)
-    shown: list[dict] = []
-    for tier_name in ("Core", "Value", "Thin"):
-        tier_rows = [row for row in eligible if hot_hit_tier(row) == tier_name]
-        take = max(0, limit - len(shown))
-        shown.extend(tier_rows[:take])
-    return shown[:limit]
 
 
 class MlbStatsClient:
@@ -457,12 +516,17 @@ def _normalize_name(value: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-def render_report(rows: list[GradedHotHit], include_pending: bool = False) -> str:
+def render_report(
+    rows: list[GradedHotHit],
+    include_pending: bool = False,
+    card_policy: str = CORE_FIRST_POLICY_VERSION,
+) -> str:
     final_rows = [row for row in rows if row.result != "PENDING"]
     discord_rows = [row for row in final_rows if row.discord_sim]
     lines = [
         "MLB Hot Hits Backtest Report",
         f"Dates: {min(row.date for row in rows)} through {max(row.date for row in rows)}",
+        f"Card policy: {card_policy}",
         "",
         "Overall",
         _summary_line("Full pool", final_rows),
@@ -476,7 +540,15 @@ def render_report(rows: list[GradedHotHit], include_pending: bool = False) -> st
 
     lines.extend(["", "Tiers"])
     for tier_name in ("Core", "Value", "Thin"):
-        lines.append(_summary_line(tier_name, [row for row in discord_rows if row.tier == tier_name]))
+        lines.append(
+            _summary_line(
+                tier_name,
+                [row for row in discord_rows if _selected_role(row) == tier_name],
+            )
+        )
+
+    lines.extend(["", "Parlay Outcomes"])
+    lines.extend(_parlay_outcome_lines(rows))
 
     lines.extend(["", "Score Bands"])
     score_bands: list[tuple[str, Callable[[GradedHotHit], bool]]] = [
@@ -542,6 +614,93 @@ def render_report(rows: list[GradedHotHit], include_pending: bool = False) -> st
     return "\n".join(lines)
 
 
+def _selected_cards(rows: list[GradedHotHit]) -> list[list[GradedHotHit]]:
+    cards: list[list[GradedHotHit]] = []
+    for screen_date in sorted({row.date for row in rows}):
+        card = sorted(
+            [
+                row
+                for row in rows
+                if row.date == screen_date and row.discord_sim
+            ],
+            key=lambda row: row.discord_rank or 999,
+        )
+        if card:
+            cards.append(card)
+    return cards
+
+
+def _parlay_outcome_lines(rows: list[GradedHotHit]) -> list[str]:
+    cards = _selected_cards(rows)
+    lines = [
+        "Void-adjusted: DNP legs are removed; any played miss loses; pending/unknown cards are excluded.",
+    ]
+    for leg_count in range(1, 5):
+        top_n = [card[:leg_count] for card in cards if len(card) >= leg_count]
+        lines.append(_parlay_summary_line(f"Top {leg_count}", top_n))
+
+    core_only = [
+        [row for row in card if _selected_role(row) == "Core"]
+        for card in cards
+        if any(_selected_role(row) == "Core" for row in card)
+    ]
+    core_plus_one_value = []
+    core_plus_two_values = []
+    value_only = []
+    for card in cards:
+        core = [row for row in card if _selected_role(row) == "Core"]
+        value = [row for row in card if _selected_role(row) == "Value"]
+        if core and value:
+            core_plus_one_value.append(core + value[:1])
+            core_plus_two_values.append(core + value[:2])
+        elif not core and value:
+            value_only.append(value)
+
+    lines.append(_parlay_summary_line("All available Core", core_only))
+    lines.append(_parlay_summary_line("Core + first Value", core_plus_one_value))
+    lines.append(_parlay_summary_line("Core + up to two Value", core_plus_two_values))
+    lines.append(_parlay_summary_line("Value-only fallback", value_only))
+    lines.append(_parlay_summary_line("Full simulated card", cards))
+    return lines
+
+
+def _parlay_summary_line(label: str, cards: list[list[GradedHotHit]]) -> str:
+    wins = 0
+    losses = 0
+    no_action = 0
+    pending = 0
+    other = 0
+    dnp_legs = 0
+    total_legs = 0
+
+    for card in cards:
+        total_legs += len(card)
+        dnp_legs += sum(row.result == "DNP" for row in card)
+        if any(row.result == "PENDING" for row in card):
+            pending += 1
+            continue
+        if any(row.result in {"NO_PLAYER", "NO_GAME", "UNKNOWN"} for row in card):
+            other += 1
+            continue
+        played = [row for row in card if row.result in {"HIT", "MISS"}]
+        if not played:
+            no_action += 1
+        elif any(row.result == "MISS" for row in played):
+            losses += 1
+        else:
+            wins += 1
+
+    graded = wins + losses
+    rate = wins / graded if graded else 0.0
+    average_legs = total_legs / len(cards) if cards else 0.0
+    return (
+        f"{label}: {wins}/{graded} cards ({rate:.1%})"
+        f" | loss {losses} | DNP legs {dnp_legs}"
+        f" | no action {no_action} | other {other} | pending {pending}"
+        f" | opportunities {len(cards)} | avg shown {average_legs:.1f}"
+    )
+
+
 def _summary_line(label: str, rows: list[GradedHotHit]) -> str:
     graded = [row for row in rows if row.result in {"HIT", "MISS"}]
     hits = sum(row.result == "HIT" for row in graded)
@@ -576,9 +735,9 @@ def _day_shape_lines(rows: list[GradedHotHit]) -> list[str]:
 
 
 def _card_shape(rows: list[GradedHotHit]) -> str:
-    core_count = sum(row.tier == "Core" for row in rows)
-    value_count = sum(row.tier == "Value" for row in rows)
-    thin_count = sum(row.tier == "Thin" for row in rows)
+    core_count = sum(_selected_role(row) == "Core" for row in rows)
+    value_count = sum(_selected_role(row) == "Value" for row in rows)
+    thin_count = sum(_selected_role(row) == "Thin" for row in rows)
     match_count = sum(row.matchup_rating >= 0.20 for row in rows)
     hot_count = sum(row.avg_last_5 >= 0.450 for row in rows)
     if thin_count >= 3:
@@ -594,13 +753,17 @@ def _card_shape(rows: list[GradedHotHit]) -> str:
     return "Balanced"
 
 
+def _selected_role(row: GradedHotHit) -> str:
+    return row.discord_role or row.tier
+
+
 def _row_lines(rows: list[GradedHotHit], limit: int) -> list[str]:
     if not rows:
         return ["None"]
     lines = []
     for row in rows[:limit]:
         lines.append(
-            f"{row.date} {row.tier} rank{row.rank} score={row.score} "
+            f"{row.date} {_selected_role(row)} rank{row.rank} score={row.score} "
             f"{row.batter_name} ({row.team}) BO={row.batting_order or '-'} "
             f"L5={row.avg_last_5:.3f} Szn={row.season_avg:.3f} "
             f"Match={row.matchup_rating:+.2f} HRate={row.pitcher_hits_allowed_rate_last_5:.3f} "

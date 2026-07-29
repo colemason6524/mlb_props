@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from .config import HotHitsThresholds, Settings
+from .hot_hits_policy import HotHitScoringInput, score_hot_hit_candidate
 from .models import BatterGameLog, BatterPitcherHistory, Game, HotHitCandidate, PitcherGameLog
 from .sources.mlb_stats_api import ProjectedBatter
 from .utils import normalize_name
@@ -165,93 +166,27 @@ def _score_candidate(
     bvp: BatterPitcherHistory | None,
     matchup_rating: float,
 ) -> tuple[int, list[str]]:
-    score = 0
-    flags: list[str] = []
-
-    if hit_games_last_5 >= 5:
-        score += 2
-    elif hit_games_last_5 >= 4:
-        score += 1
-
-    if hit_games_last_10 >= 8:
-        score += 2
-        flags.append("HIT_STREAK")
-    elif hit_games_last_10 >= 7:
-        score += 1
-
-    if avg_last_5 >= thresholds.strong_hot_avg:
-        score += 3
-        flags.append("VERY_HOT")
-    else:
-        score += 2
-        flags.append("HOT")
-
-    if avg_last_10 >= 0.320:
-        score += 1
-    if season_avg >= 0.285:
-        score += 2
-        flags.append("SEASON_PLUS")
-    elif season_avg >= 0.260:
-        score += 1
-
-    if avg_last_5 - season_avg >= 0.080:
-        score += 1
-        flags.append("TREND_SPIKE")
-    elif avg_last_5 < season_avg:
-        score -= 1
-
     pitcher_hit_rate_recent = _pitcher_hits_allowed_rate(pitcher_last_5)
-
-    if batter.batting_order is not None and batter.batting_order <= 4:
-        score += 1
-        flags.append("ORDER_TOP")
-    elif batter.batting_order is not None and 5 <= batter.batting_order <= 7:
-        if matchup_rating < 0.0 and pitcher_hit_rate_recent < 0.260:
-            score -= 1
-        flags.append("ORDER_VALUE")
-    elif batter.batting_order is not None and batter.batting_order >= 8:
-        score -= 2
-        flags.append("ORDER_LOW")
-
-    if matchup_rating >= 0.20:
-        score += 3
-        flags.append("MATCHUP_PLUS")
-    elif matchup_rating <= -0.20:
-        score -= 2
-        flags.append("MATCHUP_MINUS")
-
-    if pitcher_hit_rate_recent >= 0.280:
-        score += 2
-        flags.append("PITCHER_HITS")
-    elif pitcher_hit_rate_recent >= 0.260:
-        score += 1
-        flags.append("PITCHER_HITS")
-    elif pitcher_hit_rate_recent <= 0.220 and pitcher_logs:
-        score -= 1
-
-    pitcher_k_rate = _pitcher_k_rate(pitcher_last_5)
-    if pitcher_k_rate <= 0.200 and pitcher_logs:
-        score += 1
-        flags.append("CONTACT_PLUS")
-    elif pitcher_k_rate >= 0.285:
-        score -= 1
-        flags.append("PITCHER_K_RISK")
-
-    if _pitcher_walk_rate(pitcher_last_5) >= 0.095:
-        score -= 1
-        flags.append("WALK_RISK")
-
-    if bvp is not None:
-        if bvp.at_bats >= 8 and (bvp.batting_average or 0.0) >= 0.300:
-            score += 1
-            flags.append("BVP_PLUS")
-        elif 0 < bvp.at_bats < 8:
-            flags.append("BVP_THIN")
-        elif bvp.at_bats >= 8 and (bvp.batting_average or 0.0) <= 0.180:
-            score -= 1
-            flags.append("BVP_MINUS")
-
-    return score, flags
+    result = score_hot_hit_candidate(
+        HotHitScoringInput(
+            avg_last_5=avg_last_5,
+            avg_last_10=avg_last_10,
+            season_avg=season_avg,
+            hit_games_last_5=hit_games_last_5,
+            hit_games_last_10=hit_games_last_10,
+            batting_order=batter.batting_order,
+            matchup_rating=matchup_rating,
+            pitcher_hits_allowed_rate_last_5=pitcher_hit_rate_recent,
+            pitcher_k_rate_last_5=_pitcher_k_rate(pitcher_last_5),
+            pitcher_walk_rate_last_5=_pitcher_walk_rate(pitcher_last_5),
+            pitcher_has_data=bool(pitcher_logs),
+            batter_vs_pitcher_ab=bvp.at_bats if bvp is not None else 0,
+            batter_vs_pitcher_avg=bvp.batting_average if bvp is not None else None,
+            batter_vs_pitcher_available=bvp is not None,
+        ),
+        strong_hot_avg=thresholds.strong_hot_avg,
+    )
+    return result.score, result.flags
 
 
 def _matchup_rating(

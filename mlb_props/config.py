@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from .hot_hits_policy import (
+    CORE_FIRST_POLICY_VERSION,
+    HOT_HITS_CARD_POLICIES,
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = ROOT / ".cache"
@@ -186,6 +191,9 @@ class HotHitsThresholds:
     max_batters_per_team: int = 9
     include_bvp: bool = True
     discord_min_score: int = 10
+    discord_card_policy: str = CORE_FIRST_POLICY_VERSION
+    discord_core_limit: int = 4
+    discord_value_limit: int = 2
 
 
 @dataclass
@@ -225,6 +233,17 @@ def load_settings() -> Settings:
         requested = [item.strip().upper() for item in prop_types_str.split(",") if item.strip()]
         supported_prop_types = [item for item in SUPPORTED_PROP_TYPES if item in requested]
 
+    hot_hits_card_policy = os.environ.get(
+        "HOT_HITS_CARD_POLICY",
+        CORE_FIRST_POLICY_VERSION,
+    ).strip() or CORE_FIRST_POLICY_VERSION
+    if hot_hits_card_policy not in HOT_HITS_CARD_POLICIES:
+        supported = ", ".join(sorted(HOT_HITS_CARD_POLICIES))
+        raise ValueError(
+            f"Unsupported HOT_HITS_CARD_POLICY={hot_hits_card_policy!r}; "
+            f"expected one of: {supported}"
+        )
+
     aliases_path = CONFIG_DIR / "player_aliases.json"
     aliases = {}
     if aliases_path.exists():
@@ -251,6 +270,9 @@ def load_settings() -> Settings:
             max_batters_per_team=int(os.environ.get("HOT_HITS_MAX_BATTERS_PER_TEAM", "9")),
             include_bvp=os.environ.get("HOT_HITS_INCLUDE_BVP", "true").strip().lower() not in {"0", "false", "no"},
             discord_min_score=int(os.environ.get("HOT_HITS_DISCORD_MIN_SCORE", "10")),
+            discord_card_policy=hot_hits_card_policy,
+            discord_core_limit=int(os.environ.get("HOT_HITS_CORE_LIMIT", "4")),
+            discord_value_limit=int(os.environ.get("HOT_HITS_VALUE_LIMIT", "2")),
         ),
         player_aliases=aliases,
         include_under_candidates=os.environ.get("INCLUDE_UNDERS", "true").strip().lower() not in {"0", "false", "no"},
