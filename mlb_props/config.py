@@ -190,6 +190,7 @@ class HotHitsThresholds:
     min_display_score: int = 7
     max_batters_per_team: int = 9
     include_bvp: bool = True
+    include_contact_quality_shadow: bool = True
     discord_min_score: int = 10
     discord_card_policy: str = CORE_FIRST_POLICY_VERSION
     discord_core_limit: int = 4
@@ -269,6 +270,10 @@ def load_settings() -> Settings:
             min_display_score=int(os.environ.get("HOT_HITS_MIN_SCORE", "7")),
             max_batters_per_team=int(os.environ.get("HOT_HITS_MAX_BATTERS_PER_TEAM", "9")),
             include_bvp=os.environ.get("HOT_HITS_INCLUDE_BVP", "true").strip().lower() not in {"0", "false", "no"},
+            include_contact_quality_shadow=os.environ.get(
+                "HOT_HITS_INCLUDE_CONTACT_SHADOW",
+                "true",
+            ).strip().lower() not in {"0", "false", "no"},
             discord_min_score=int(os.environ.get("HOT_HITS_DISCORD_MIN_SCORE", "10")),
             discord_card_policy=hot_hits_card_policy,
             discord_core_limit=int(os.environ.get("HOT_HITS_CORE_LIMIT", "4")),

@@ -328,6 +328,7 @@ class HotHitsConfigurationTests(unittest.TestCase):
         self.assertEqual(thresholds.discord_card_policy, "core-first-v1")
         self.assertEqual(thresholds.discord_core_limit, 4)
         self.assertEqual(thresholds.discord_value_limit, 2)
+        self.assertTrue(thresholds.include_contact_quality_shadow)
 
 
 class CurrentHotHitsGradingTests(unittest.TestCase):

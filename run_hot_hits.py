@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from mlb_props.cache import JsonCache
@@ -17,6 +17,12 @@ from mlb_props.sources.mlb_stats_api import (
     MlbStatsApiPitcherLogsSource,
     MlbStatsApiSlateSource,
 )
+from mlb_props.sources.baseball_savant import (
+    CONTACT_QUALITY_SHADOW_VERSION,
+    BaseballSavantContactSource,
+    enrich_contact_quality_profile,
+)
+from mlb_props.utils import normalize_name
 
 
 def export_hot_hits_history(payload: dict) -> Path:
@@ -41,6 +47,60 @@ def _history_selection_item(candidate, rank: int) -> dict:
         "score": candidate.score,
         "tier": hot_hit_tier(candidate),
     }
+
+
+def attach_contact_quality_shadow(
+    *,
+    candidates,
+    logs_by_batter,
+    screen_date,
+    source,
+) -> dict:
+    batter_ids = sorted(
+        {candidate.batter_id for candidate in candidates if candidate.batter_id is not None}
+    )
+    metadata = {
+        "version": CONTACT_QUALITY_SHADOW_VERSION,
+        "status": "not_requested",
+        "as_of_date": (screen_date - timedelta(days=1)).isoformat(),
+        "requested_candidates": len(batter_ids),
+        "profiles_available": 0,
+        "error": None,
+    }
+    if not batter_ids:
+        metadata["status"] = "no_candidates"
+        return metadata
+
+    try:
+        profiles = source.fetch_profiles(batter_ids, screen_date=screen_date)
+    except Exception as exc:
+        metadata["status"] = "source_failed"
+        metadata["error"] = str(exc)
+        return metadata
+
+    for candidate in candidates:
+        if candidate.batter_id is None or candidate.batter_id not in profiles:
+            continue
+        recent_logs = [
+            log
+            for log in logs_by_batter.get(normalize_name(candidate.batter_name), [])
+            if log.game_date < screen_date
+        ][:10]
+        expected_at_bats = (
+            sum(log.at_bats for log in recent_logs) / len(recent_logs)
+            if recent_logs
+            else None
+        )
+        candidate.contact_quality_shadow = enrich_contact_quality_profile(
+            profiles[candidate.batter_id],
+            actual_avg_last_10=candidate.avg_last_10,
+            expected_at_bats=expected_at_bats,
+        )
+
+    available = sum(candidate.contact_quality_shadow is not None for candidate in candidates)
+    metadata["profiles_available"] = available
+    metadata["status"] = "available" if available == len(batter_ids) else "partial"
+    return metadata
 
 
 def main() -> int:
@@ -81,6 +141,25 @@ def main() -> int:
         ),
     )
 
+    contact_quality_metadata = {
+        "version": CONTACT_QUALITY_SHADOW_VERSION,
+        "status": "disabled",
+        "as_of_date": None,
+        "requested_candidates": 0,
+        "profiles_available": 0,
+        "error": None,
+    }
+    if settings.hot_hits_thresholds.include_contact_quality_shadow:
+        contact_quality_source = BaseballSavantContactSource(
+            JsonCache(CACHE_DIR / "savant", ttl_hours=settings.cache_ttl_hours)
+        )
+        contact_quality_metadata = attach_contact_quality_shadow(
+            candidates=candidates,
+            logs_by_batter=logs_by_batter,
+            screen_date=settings.screen_date,
+            source=contact_quality_source,
+        )
+
     print(render_hot_hit_candidates(candidates, limit=settings.display_limit))
     print("")
     print("Hot hits run summary:")
@@ -89,6 +168,19 @@ def main() -> int:
     print(f"- Projected batters checked: {len(projected_batters)}")
     print(f"- Batters with logs: {sum(1 for logs in logs_by_batter.values() if logs)}")
     print(f"- Qualified candidates: {len(candidates)}")
+    contact_status = contact_quality_metadata["status"]
+    if contact_status == "source_failed":
+        print(f"- Contact-quality shadow: source failed ({contact_quality_metadata['error']})")
+    elif contact_status == "disabled":
+        print("- Contact-quality shadow: disabled")
+    else:
+        print(
+            "- Contact-quality shadow: "
+            f"{contact_status} "
+            f"({contact_quality_metadata['profiles_available']}/"
+            f"{contact_quality_metadata['requested_candidates']} profiles, "
+            f"through {contact_quality_metadata['as_of_date']})"
+        )
 
     card_settings = settings.hot_hits_thresholds
     discord_selection = select_hot_hits_card(
@@ -129,6 +221,7 @@ def main() -> int:
                     "display_limit": settings.display_limit,
                     "hot_hits_thresholds": asdict(settings.hot_hits_thresholds),
                 },
+                "contact_quality_shadow": contact_quality_metadata,
                 "discord_delivery": {
                     "status": discord_status,
                     "policy_version": card_settings.discord_card_policy,

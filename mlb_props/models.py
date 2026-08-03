@@ -141,6 +141,37 @@ class OpportunityShadow:
 
 
 @dataclass
+class ContactQualityShadow:
+    version: str
+    source: str
+    screen_date: str
+    query_start_date: str
+    query_end_date: str
+    batter_id: int
+    games_available: int
+    recent_game_dates: list[str]
+    plate_appearances_season: int
+    xba_opportunities_season: int
+    xba_opportunities_last_10_games: int
+    tracked_bbe_season: int
+    tracked_bbe_last_10_games: int
+    tracked_bbe_last_25: int
+    season_xba: float | None
+    xba_last_10_games: float | None
+    xba_last_25_bbe: float | None
+    hard_hit_rate_last_25_bbe: float | None
+    sweet_spot_rate_last_25_bbe: float | None
+    barrel_rate_last_25_bbe: float | None
+    avg_exit_velocity_last_25_bbe: float | None
+    actual_avg_last_10: float | None = None
+    actual_ba_minus_xba_last_10: float | None = None
+    expected_at_bats: float | None = None
+    estimated_one_hit_probability: float | None = None
+    confidence: str = "low"
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Candidate:
     subject_name: str
     subject_id: int | None
@@ -260,6 +291,7 @@ class HotHitCandidate:
     matchup_rating: float
     score: int
     flags: list[str] = field(default_factory=list)
+    contact_quality_shadow: ContactQualityShadow | None = None
 
 
 @dataclass

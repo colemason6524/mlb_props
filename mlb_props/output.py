@@ -340,10 +340,16 @@ def render_hot_hit_candidates(candidates: Iterable[HotHitCandidate], limit: int 
         "P BBRate",
         "BvP",
         "Match",
+        "xBA10",
+        "xBA25",
+        "HH25",
+        "Est1+H",
+        "CQ",
         "Flags",
     ]
     rows: list[list[str]] = []
     for item in items:
+        contact = item.contact_quality_shadow
         rows.append(
             [
                 item.batter_name,
@@ -368,6 +374,11 @@ def render_hot_hit_candidates(candidates: Iterable[HotHitCandidate], limit: int 
                 f"{item.pitcher_walk_rate_last_5:.3f}",
                 _display_bvp(item),
                 f"{item.matchup_rating:+.2f}",
+                f"{contact.xba_last_10_games:.3f}" if contact and contact.xba_last_10_games is not None else "-",
+                f"{contact.xba_last_25_bbe:.3f}" if contact and contact.xba_last_25_bbe is not None else "-",
+                f"{contact.hard_hit_rate_last_25_bbe:.1%}" if contact and contact.hard_hit_rate_last_25_bbe is not None else "-",
+                f"{contact.estimated_one_hit_probability:.1%}" if contact and contact.estimated_one_hit_probability is not None else "-",
+                contact.confidence.title() if contact else "-",
                 ",".join(_display_flag(flag) for flag in item.flags),
             ]
         )
@@ -388,7 +399,9 @@ def render_hot_hit_candidates(candidates: Iterable[HotHitCandidate], limit: int 
     output.append(
         "Hot hits legend: AVG L5 is hits divided by at-bats over the last five games; "
         "HitG is games with at least one hit; P HRate/KRate/BBRate are the probable starter's recent rates by batter faced; "
-        "BvP is batter history versus today's probable starter when MLB Stats API exposes it."
+        "BvP is batter history versus today's probable starter when MLB Stats API exposes it. "
+        "xBA10 includes tracked contact plus strikeouts over the last ten games; xBA25 is contact-only over the last 25 tracked batted balls; "
+        "HH25 is hard-hit rate and Est1+H is an uncalibrated shadow estimate, not a sportsbook probability."
     )
     return "\n".join(output)
 

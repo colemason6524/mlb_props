@@ -79,6 +79,24 @@ Run hot hitters and send the top plays to Discord:
 DATA_MODE=live SEND_DISCORD=true DISCORD_WEBHOOK_URL=your_discord_webhook_url python3 run_hot_hits.py
 ```
 
+### Hot Hits Objective And Design
+
+The hot-hits board is a line-independent research tool for one-hit parlay candidates. It is not trying to price a sportsbook market directly. Detailed research history, rollout status, and next-review instructions are maintained in [`docs/HOT_HITS_HANDOFF.md`](docs/HOT_HITS_HANDOFF.md).
+
+Terminal output stays broad for research, while Discord is intentionally stricter and compact. Live Discord uses the `core-first-v1` policy: it recommends up to four Core names, permits a stable one- or two-leg Core card, and never pads the recommended parlay with a weaker tier. Value names are separate optional higher-risk research plays, and Thin names remain terminal/history only.
+
+Sportsbook odds are deliberately not integrated. Avoid adding odds APIs unless that decision is explicitly revisited.
+
+Hot Hits also collects Baseball Savant contact quality as an observation-only shadow layer. `contact-quality-shadow-v1` batches the already-qualified candidates into one cached Statcast CSV request and uses only regular-season events through the day before the screen date. It records:
+
+- season and last-10-game xBA
+- contact-only xBA over the latest 25 tracked batted balls
+- hard-hit, sweet-spot, and barrel rates
+- average exit velocity
+- an uncalibrated one-hit estimate based on blended xBA and recent at-bat opportunity
+
+These fields appear in terminal diagnostics and history exports. They do not affect raw score, Core/Value/Thin tier, Discord eligibility, card order, or Discord content. V1 observes only hitters who already passed the current Hot Hits screen, so it cannot rescue a hitter excluded by the initial recent-form gates.
+
 ## Environment variables
 
 ```bash
@@ -99,7 +117,11 @@ export HOT_HITS_STRONG_AVG=0.400
 export HOT_HITS_MIN_HIT_GAMES=4
 export HOT_HITS_MAX_BATTERS_PER_TEAM=9
 export HOT_HITS_INCLUDE_BVP=true
+export HOT_HITS_INCLUDE_CONTACT_SHADOW=true
 export HOT_HITS_DISCORD_MIN_SCORE=10
+export HOT_HITS_CARD_POLICY=core-first-v1
+export HOT_HITS_CORE_LIMIT=4
+export HOT_HITS_VALUE_LIMIT=2
 export SEND_DISCORD=false
 export DISCORD_WEBHOOK_URL=your_discord_webhook_url
 ```
