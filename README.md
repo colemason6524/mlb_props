@@ -261,9 +261,21 @@ Current Discord tiers are intentionally qualitative:
 
 Sportsbook odds are deliberately not integrated. The mental model is that top-order and obvious hitters may be priced poorly, while some value bats may require a lower raw hit probability to be useful in parlays. Avoid adding odds APIs unless that is explicitly revisited; it was deferred to keep the system simple and avoid fragile integrations.
 
-Hot Hits also collects Baseball Savant contact quality as an observation-only shadow layer. `contact-quality-shadow-v1` batches the already-qualified candidates into one cached Statcast CSV request and uses only regular-season events through the day before the screen date. It records season and last-10-game xBA, contact-only xBA over the latest 25 tracked batted balls, hard-hit rate, sweet-spot rate, barrel rate, average exit velocity, and an uncalibrated estimate of recording at least one hit based on blended xBA and recent at-bat opportunity.
+Hot Hits also collects Baseball Savant contact quality as an observation-only shadow layer. `contact-quality-shadow-v1` batches a broader research pool into cached Statcast CSV requests and uses only regular-season events through the day before the screen date. It records season and last-10-game xBA, contact-only xBA over the latest 25 tracked batted balls, hard-hit rate, sweet-spot rate, barrel rate, average exit velocity, and recent at-bat opportunity. Batch failure is fail-open: successful batches remain usable and the production board continues even if Savant is unavailable.
 
-These shadow fields appear in terminal diagnostics and history exports. They do not affect raw score, Core/Value/Thin tier, Discord eligibility, card order, or Discord content. This observation period is meant to establish whether quality of contact explains hits and misses better than short hit streaks before any scoring proposal is considered. Because v1 fetches Savant data only after the existing screen qualifies a hitter, it can compare current candidates and near-misses but cannot rescue a player excluded by the initial recent-form gates.
+The broader pool is deliberately separate from the production gate. The existing production requirements and Core/Value/Thin policy are unchanged. A research profile needs at least 10 games, 12 last-5 at-bats, batting order 1-7, season average at least `.230`, and at least one of season average `.250`, last-10 average `.240`, or last-5 average `.300`. Every hitter who clears the current production gate is retained in the research pool even if that broader rule would otherwise omit them. Each profile records whether it cleared the current gate and the exact failed gates.
+
+`hot-hits-confidence-provisional-v1` ranks this broader pool by an estimated chance of at least one hit. It blends season and last-10 xBA with a recent weight capped at `35%`, applies only a small matchup adjustment, converts the per-at-bat estimate using expected at-bats and batting-order opportunity, and shrinks toward the season anchor when Statcast reliability is weak. If Savant is unavailable, it falls back to season and last-10 batting average and marks the estimate as results-based and lower reliability.
+
+Provisional Hot Hits labels are:
+
+- `78%+`: Strong
+- `72-77%`: Solid
+- `66-71%`: Cautious
+- `60-65%`: Higher Risk
+- below `60%`: No Pick
+
+The confidence research board appears only in terminal output and history. It does not affect raw score, production qualification, Core/Value/Thin tier, Discord eligibility, card order, or Discord content. The percentage is price-independent, capped to `45-88%` while provisional, and is not a claim of calibration, betting value, or expected return. Collect and grade a materially larger normal-slate sample before changing production selection.
 
 ## Environment variables
 
@@ -286,6 +298,11 @@ export HOT_HITS_MIN_HIT_GAMES=4
 export HOT_HITS_MAX_BATTERS_PER_TEAM=9
 export HOT_HITS_INCLUDE_BVP=true
 export HOT_HITS_INCLUDE_CONTACT_SHADOW=true
+export HOT_HITS_RESEARCH_MIN_SEASON_AVG=0.230
+export HOT_HITS_RESEARCH_MIN_AVG_L10=0.240
+export HOT_HITS_RESEARCH_MIN_AVG_L5=0.300
+export HOT_HITS_RESEARCH_STRONG_SEASON_AVG=0.250
+export HOT_HITS_RESEARCH_MAX_BATTING_ORDER=7
 export HOT_HITS_DISCORD_MIN_SCORE=10
 export HOT_HITS_CARD_POLICY=core-first-v1
 export HOT_HITS_CORE_LIMIT=4
@@ -386,6 +403,8 @@ python3 hot_hits_report.py \
 ```
 
 For `core-first-v1` and `current-v1`, the report recomputes hot-hit scores using the current model before simulating Discord selection. That makes old history useful for testing current rules, but it also means reported score bands may differ from the score printed on the original run day if scoring logic has changed since then. The `delivered` policy instead uses delivery metadata from newer exports and ignores exports where Discord was not successfully sent.
+
+Exports containing `confidence_research_pool` are graded across that broader pool. The report still limits policy replays to profiles that were production-qualified, so research-only names cannot leak into a simulated Discord card. It also reports observed hit rate, mean forecast and Brier score by confidence label; current-gate pass/fail; confidence-ranked one- through four-leg shadow cards; and hits excluded by the current gate. Older exports without the new pool continue to grade their original `candidates` array.
 
 For Windows-to-Mac review, either zip logs/history on Windows or pull raw files with `scp`. History JSON files are the grading source of truth; task logs are mainly for debugging scheduled-run failures. Local pull folders such as `hot_hits_from_windows/` and `pitcher_props_from_windows/` are ignored by git.
 
@@ -631,6 +650,10 @@ Do not add these shadow values to score or tier policy merely because they are p
 - The All-Star break and other abnormal slate windows can produce empty or tiny hot-hits samples. Do not tune the model from those periods alone.
 - Recent model review found the broad hot-hits candidate pool was useful, but the old Discord top-eight card was too impressed by heat. The current tradeoff is a smaller Discord card that may miss some broader hits but should be easier to review.
 - Backtests showed top score alone does not reliably beat the full card. Useful support patterns have included top-half batting order, positive matchup rating, and starter hit-allowed context; pure `5/5` hit streaks and `.450+` last-5 average alone were not enough.
+- The production Hot Hits gate still requires at least four hit games in the last five and a `.350` last-5 average. A broader confidence research pool now exists specifically to measure whether that gate excludes stronger xBA and opportunity profiles; it does not loosen the live card.
+- Hot Hits confidence is a provisional estimate of recording at least one hit, not a conversion of the additive score. It is independent of sportsbook price and cannot be interpreted as expected value.
+- Baseball Savant season/last-10 xBA and expected at-bat opportunity drive the confidence shadow. Hit-game streak count is recorded as current-gate context but does not directly increase confidence.
+- Existing Hot Hits Task Scheduler definitions require no change for the broader pool or confidence shadow. The default settings are in code, and the existing wrapper will export the new nested history fields after deployment.
 - Known limitation: `hot_hits_report.py` fetches MLB boxscores over the network and can be slow if pointed at a large raw history folder. Prefer a focused `--since` window or a small copied directory when reviewing recent changes.
 
 ## Git workflow for the shared pitcher/hitter repo
@@ -732,4 +755,13 @@ python3 backtest.py --all-history --include-watch \
 - `mlb_props/pitcher_presentation.py` ranks eligible candidates by provisional probability. `mlb_props/tiers.py` remains the unchanged source of truth for Core/Lean/Watch.
 - Discord leads with percentage and label, calls opportunity context `Workload reliability`, and omits signal balance. Terminal/history keep the internal signal for research.
 - Backtest confidence calibration is the next review path. Do not tune label boundaries from a few slates; target at least 50-100 resolved confidence estimates.
+
+### Hot Hits confidence checkpoint: 2026-08-04
+
+- Thin Aug. 2-4 boards confirmed that last-5 results have structural authority at the initial gate and again in scoring/support/tiering. A zero-Core slate can also result from strict Core support requirements, so the gate is not the only cause of thin action.
+- The production screen and `core-first-v1` Discord card remain unchanged. The new `screen_hot_hitters_with_research()` path returns the same production candidates plus a broader observation pool.
+- `mlb_props/hot_hits_confidence.py` owns `hot-hits-confidence-provisional-v1`. It uses xBA/contact reliability, expected at-bats, batting order, a capped matchup adjustment, and an explicit results-based fallback when Savant is unavailable.
+- Terminal output now adds a separate confidence research table. Discord continues to render only the existing production candidates and does not read confidence.
+- New history exports save `confidence_research_pool`, per-profile current-gate failures and confidence estimates, and top-level confidence metadata. `hot_hits_report.py` grades the broader pool while preserving the production boundary for policy simulation.
+- Do not adjust the current gate, confidence weights, or label cutoffs from the first few slates. First verify collection coverage and missingness, then target at least 50-100 resolved research profiles across normal slates for calibration and gate-exclusion analysis.
 - The active projection and tier-policy versions remain unchanged. Existing Windows Task Scheduler definitions still require no modification.

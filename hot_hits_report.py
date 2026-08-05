@@ -61,6 +61,14 @@ class GradedHotHit:
     at_bats: int | None
     plate_appearances: int | None
     game_state: str | None
+    current_gate_qualified: bool
+    current_display_qualified: bool
+    gate_failures: list[str]
+    confidence_probability: float | None
+    confidence_percentage: int | None
+    confidence_label: str | None
+    confidence_reliability: float | None
+    confidence_model_version: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,7 +189,16 @@ def grade_history_files(
         screen_date = payload["screen_date"]
         if (since and screen_date < since) or (through and screen_date > through):
             continue
-        candidates = payload["candidates"]
+        production_candidates = payload["candidates"]
+        production_keys = {
+            _candidate_delivery_key(candidate) for candidate in production_candidates
+        }
+        research_candidates = payload.get("confidence_research_pool")
+        candidates = (
+            research_candidates
+            if isinstance(research_candidates, list) and research_candidates
+            else production_candidates
+        )
         delivery = payload.get("discord_delivery") or {}
         delivered_items: dict[tuple[str, str], tuple[int, str]] = {}
         if delivery.get("status") == "sent":
@@ -203,7 +220,20 @@ def grade_history_files(
             row["original_score"] = int(row.get("score", 0) or 0)
             row["score"] = current_hot_hit_score(row)
             row.update(api.grade_batter(candidate, screen_date))
-            row["tier"] = hot_hit_tier(row)
+            row["current_display_qualified"] = bool(
+                row.get(
+                    "current_display_qualified",
+                    _candidate_delivery_key(row) in production_keys,
+                )
+            )
+            row["current_gate_qualified"] = bool(
+                row.get("current_gate_qualified", row["current_display_qualified"])
+            )
+            row["tier"] = (
+                hot_hit_tier(row)
+                if row["current_display_qualified"]
+                else "Research"
+            )
             delivered_rank_role = delivered_items.get(_candidate_delivery_key(row))
             row["_delivered_rank"] = (
                 delivered_rank_role[0] if delivered_rank_role else None
@@ -235,6 +265,7 @@ def grade_history_files(
     graded: list[GradedHotHit] = []
     for row in rows:
         key = (row["date"], row["rank"], row.get("batter_name", ""))
+        confidence = row.get("confidence_estimate") or {}
         graded.append(
             GradedHotHit(
                 date=row["date"],
@@ -268,6 +299,28 @@ def grade_history_files(
                 at_bats=row.get("at_bats"),
                 plate_appearances=row.get("plate_appearances"),
                 game_state=row.get("game_state"),
+                current_gate_qualified=bool(row.get("current_gate_qualified", True)),
+                current_display_qualified=bool(
+                    row.get("current_display_qualified", True)
+                ),
+                gate_failures=list(row.get("gate_failures") or []),
+                confidence_probability=(
+                    float(confidence.get("hit_probability"))
+                    if confidence.get("hit_probability") is not None
+                    else None
+                ),
+                confidence_percentage=(
+                    int(confidence.get("confidence_percentage"))
+                    if confidence.get("confidence_percentage") is not None
+                    else None
+                ),
+                confidence_label=confidence.get("label"),
+                confidence_reliability=(
+                    float(confidence.get("reliability_weight"))
+                    if confidence.get("reliability_weight") is not None
+                    else None
+                ),
+                confidence_model_version=confidence.get("version"),
             )
         )
     return graded
@@ -345,7 +398,12 @@ def simulated_discord_card(
             [row for row in rows if row.get("_delivered_rank") is not None],
             key=lambda row: int(row["_delivered_rank"]),
         )
-    snapshots = [(HotHitPolicySnapshot.from_mapping(row), row) for row in rows]
+    production_rows = [
+        row for row in rows if row.get("current_display_qualified", True)
+    ]
+    snapshots = [
+        (HotHitPolicySnapshot.from_mapping(row), row) for row in production_rows
+    ]
     rows_by_snapshot_id = {id(snapshot): row for snapshot, row in snapshots}
     policy_candidates = [snapshot for snapshot, _ in snapshots]
     if card_policy == CORE_FIRST_POLICY_VERSION:
@@ -522,14 +580,21 @@ def render_report(
     card_policy: str = CORE_FIRST_POLICY_VERSION,
 ) -> str:
     final_rows = [row for row in rows if row.result != "PENDING"]
+    production_rows = [row for row in final_rows if row.current_display_qualified]
     discord_rows = [row for row in final_rows if row.discord_sim]
+    pool_label = (
+        "Confidence research pool"
+        if any(row.confidence_percentage is not None for row in final_rows)
+        else "Full pool"
+    )
     lines = [
         "MLB Hot Hits Backtest Report",
         f"Dates: {min(row.date for row in rows)} through {max(row.date for row in rows)}",
         f"Card policy: {card_policy}",
         "",
         "Overall",
-        _summary_line("Full pool", final_rows),
+        _summary_line(pool_label, final_rows),
+        _summary_line("Current production pool", production_rows),
         _summary_line("Simulated Discord", discord_rows),
         "",
         "By Day",
@@ -550,6 +615,34 @@ def render_report(
     lines.extend(["", "Parlay Outcomes"])
     lines.extend(_parlay_outcome_lines(rows))
 
+    confidence_rows = [
+        row for row in final_rows if row.confidence_percentage is not None
+    ]
+    if confidence_rows:
+        lines.extend(["", "Confidence Research"])
+        lines.append(_confidence_summary_line("All estimates", confidence_rows))
+        for label in ("STRONG", "SOLID", "CAUTIOUS", "HIGHER RISK", "NO PICK"):
+            lines.append(
+                _confidence_summary_line(
+                    label.title(),
+                    [row for row in confidence_rows if row.confidence_label == label],
+                )
+            )
+        lines.append(
+            _summary_line(
+                "Current gate qualified",
+                [row for row in confidence_rows if row.current_gate_qualified],
+            )
+        )
+        lines.append(
+            _summary_line(
+                "Current gate excluded",
+                [row for row in confidence_rows if not row.current_gate_qualified],
+            )
+        )
+        lines.extend(["", "Confidence-Ranked Parlay Outcomes"])
+        lines.extend(_confidence_parlay_outcome_lines(rows))
+
     lines.extend(["", "Score Bands"])
     score_bands: list[tuple[str, Callable[[GradedHotHit], bool]]] = [
         ("score >= 18", lambda row: row.score >= 18),
@@ -560,7 +653,9 @@ def render_report(
         ("score < 10", lambda row: row.score < 10),
     ]
     for label, predicate in score_bands:
-        lines.append(_summary_line(label, [row for row in final_rows if predicate(row)]))
+        lines.append(
+            _summary_line(label, [row for row in production_rows if predicate(row)])
+        )
 
     lines.extend(["", "Lineup And PA"])
     buckets: list[tuple[str, Callable[[GradedHotHit], bool]]] = [
@@ -601,10 +696,27 @@ def render_report(
     missed_hits = [
         row
         for row in final_rows
-        if not row.discord_sim and row.result == "HIT" and (row.rank <= 12 or row.score >= 12)
+        if row.current_display_qualified
+        and not row.discord_sim
+        and row.result == "HIT"
+        and (row.rank <= 12 or row.score >= 12)
     ]
     missed_hits.sort(key=lambda row: (row.date, -row.score, row.rank))
     lines.extend(_row_lines(missed_hits, limit=25))
+
+    excluded_confidence_hits = sorted(
+        [
+            row
+            for row in final_rows
+            if not row.current_gate_qualified
+            and row.confidence_percentage is not None
+            and row.result == "HIT"
+        ],
+        key=lambda row: (row.date, -(row.confidence_percentage or 0)),
+    )
+    if confidence_rows:
+        lines.extend(["", "Confidence Hits Excluded By Current Gate"])
+        lines.extend(_row_lines(excluded_confidence_hits, limit=25))
 
     pending = [row for row in rows if row.result == "PENDING"]
     if include_pending and pending:
@@ -664,6 +776,33 @@ def _parlay_outcome_lines(rows: list[GradedHotHit]) -> list[str]:
     return lines
 
 
+def _confidence_parlay_outcome_lines(rows: list[GradedHotHit]) -> list[str]:
+    cards: list[list[GradedHotHit]] = []
+    for screen_date in sorted({row.date for row in rows}):
+        ranked = sorted(
+            [
+                row
+                for row in rows
+                if row.date == screen_date and row.confidence_percentage is not None
+            ],
+            key=lambda row: (
+                row.confidence_percentage or 0,
+                row.confidence_reliability or 0.0,
+                -(row.batting_order or 99),
+            ),
+            reverse=True,
+        )
+        if ranked:
+            cards.append(ranked)
+    lines = [
+        "Shadow only: ranked from the broader research pool; not the delivered card.",
+    ]
+    for leg_count in range(1, 5):
+        top_n = [card[:leg_count] for card in cards if len(card) >= leg_count]
+        lines.append(_parlay_summary_line(f"Confidence Top {leg_count}", top_n))
+    return lines
+
+
 def _parlay_summary_line(label: str, cards: list[list[GradedHotHit]]) -> str:
     wins = 0
     losses = 0
@@ -715,6 +854,38 @@ def _summary_line(label: str, rows: list[GradedHotHit]) -> str:
     )
 
 
+def _confidence_summary_line(label: str, rows: list[GradedHotHit]) -> str:
+    graded = [
+        row
+        for row in rows
+        if row.result in {"HIT", "MISS"} and row.confidence_probability is not None
+    ]
+    hits = sum(row.result == "HIT" for row in graded)
+    hit_rate = hits / len(graded) if graded else 0.0
+    mean_forecast = (
+        sum(row.confidence_probability or 0.0 for row in graded) / len(graded)
+        if graded
+        else 0.0
+    )
+    brier = (
+        sum(
+            ((row.confidence_probability or 0.0) - (1.0 if row.result == "HIT" else 0.0))
+            ** 2
+            for row in graded
+        )
+        / len(graded)
+        if graded
+        else 0.0
+    )
+    dnp = sum(row.result == "DNP" for row in rows)
+    other = len(rows) - len(graded) - dnp
+    return (
+        f"{label}: {hits}/{len(graded)} ({hit_rate:.1%})"
+        f" | avg forecast {mean_forecast:.1%} | Brier {brier:.3f}"
+        f" | DNP {dnp} | other {other}"
+    )
+
+
 def _day_shape_lines(rows: list[GradedHotHit]) -> list[str]:
     lines: list[str] = []
     for screen_date in sorted({row.date for row in rows}):
@@ -762,11 +933,22 @@ def _row_lines(rows: list[GradedHotHit], limit: int) -> list[str]:
         return ["None"]
     lines = []
     for row in rows[:limit]:
+        confidence = (
+            f" Conf={row.confidence_percentage}%/{(row.confidence_label or '-').title()}"
+            if row.confidence_percentage is not None
+            else ""
+        )
+        gate = (
+            "Gate=Pass"
+            if row.current_gate_qualified
+            else "Gate=" + ",".join(row.gate_failures)
+        )
         lines.append(
             f"{row.date} {_selected_role(row)} rank{row.rank} score={row.score} "
             f"{row.batter_name} ({row.team}) BO={row.batting_order or '-'} "
             f"L5={row.avg_last_5:.3f} Szn={row.season_avg:.3f} "
             f"Match={row.matchup_rating:+.2f} HRate={row.pitcher_hits_allowed_rate_last_5:.3f} "
+            f"{gate}{confidence} "
             f"{row.result} H={row.hits} AB={row.at_bats} PA={row.plate_appearances}"
         )
     if len(rows) > limit:

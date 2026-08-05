@@ -1,6 +1,6 @@
 # Hot Hits Handoff
 
-Status checkpoint: 2026-08-02
+Status checkpoint: 2026-08-04
 
 ## Purpose And Operating Goal
 
@@ -27,25 +27,26 @@ Production Discord uses policy `core-first-v1`:
 
 The former six-name policy remains available as `current-v1` for historical comparison or temporary rollback. The scoring model and eligibility gates were not changed during the Core-first rollout; the production change was card construction and presentation.
 
-`contact-quality-shadow-v1` is the next observation layer. It is deliberately non-scoring: Baseball Savant xBA and contact-quality measurements are collected for study without changing the production card.
+`contact-quality-shadow-v1` and `hot-hits-confidence-provisional-v1` are the current observation layers. They are deliberately non-production: Baseball Savant xBA, expected at-bat opportunity, and the provisional one-hit estimate are collected for study without changing the production card.
 
 ## Current Data Flow
 
 1. `run_hot_hits.py` loads settings and the MLB slate.
 2. MLB Stats API sources collect probable starters, projected bats, batter logs, pitcher logs, and optional BvP context.
-3. `mlb_props/hot_hits.py` screens and scores qualified candidates.
+3. `mlb_props/hot_hits.py` produces the unchanged production candidates plus a broader confidence research pool and records current-gate failures.
 4. `mlb_props/hot_hits_policy.py` owns shared scoring, support, tier, eligibility, sorting, and card-selection rules.
 5. `mlb_props/output.py` renders the full terminal board and the compact Core-first Discord message.
-6. `run_hot_hits.py` sends Discord and exports every qualified candidate when history export is enabled.
-7. `hot_hits_report.py` grades exported candidates against MLB boxscores and can replay either selection policy or grade exact delivered cards.
+6. `run_hot_hits.py` enriches the broader pool with Savant data, attaches provisional confidence, sends Discord from production candidates only, and exports both populations when history export is enabled.
+7. `hot_hits_report.py` grades exported research profiles against MLB boxscores while limiting simulated production cards to profiles that cleared the production screen.
 
-After the current screen qualifies candidates, `run_hot_hits.py` optionally makes one cached Baseball Savant Statcast CSV request for those batter IDs. The request ends on the day before `screen_date`, so same-day outcomes cannot leak into the pregame profile. The resulting `contact_quality_shadow` is attached before terminal rendering and history export, but after scoring.
+After both populations are built, `run_hot_hits.py` optionally makes cached Baseball Savant Statcast CSV requests in batches of 25 batter IDs. Every request ends on the day before `screen_date`, so same-day outcomes cannot leak into the pregame profile. Successful batches remain usable if another batch fails. The resulting `contact_quality_shadow` and confidence estimate are attached before terminal rendering and history export, but neither is read by production scoring or Discord selection.
 
 Important implementation files:
 
 - `run_hot_hits.py`
 - `mlb_props/hot_hits.py`
 - `mlb_props/hot_hits_policy.py`
+- `mlb_props/hot_hits_confidence.py`
 - `mlb_props/output.py`
 - `mlb_props/config.py`
 - `hot_hits_report.py`
@@ -55,6 +56,7 @@ Important implementation files:
 - `tests/test_hot_hits_report.py`
 - `mlb_props/sources/baseball_savant.py`
 - `tests/test_baseball_savant_contact.py`
+- `tests/test_hot_hits_confidence.py`
 
 ## Contact-Quality Shadow V1
 
@@ -81,7 +83,31 @@ Current safeguards:
 - tests assert that shadow attachment cannot change tier or card selection
 - `HOT_HITS_INCLUDE_CONTACT_SHADOW=false` disables collection without changing scheduled-task commands
 
-V1 only fetches Savant profiles for already-qualified Hot Hits candidates. This keeps the batch small and the first study focused, but it means the shadow cannot yet reveal strong-contact hitters excluded by the initial hot-average and hit-game gates. Expanding collection to a broader projected-batter research population is a later decision after reliability and usefulness are established.
+The previous V1 limitation has been removed: Savant now covers a broader projected-batter research population, not only production qualifiers. The research gate requires at least 10 games, 12 last-5 at-bats, batting order 1-7, season average `.230`, and one of season average `.250`, last-10 average `.240`, or last-5 average `.300`. Current production qualifiers are always retained. These are collection boundaries, not recommendation thresholds.
+
+## Provisional Confidence Research
+
+`hot-hits-confidence-provisional-v1` estimates the chance of at least one hit without using sportsbook price. It:
+
+- blends season and last-10 xBA with recent weight capped at `35%`
+- applies a deliberately small matchup adjustment capped at `+/- .015` per at-bat
+- blends recent expected at-bats with a batting-order opportunity target
+- converts per-at-bat probability to one-hit probability with `1 - (1 - p) ^ expected_AB`
+- shrinks the recent/contact result toward the season anchor according to Savant reliability
+- falls back to season and last-10 batting average at lower reliability when Savant is unavailable
+- caps displayed estimates to `45-88%` while uncalibrated
+
+Labels are Strong at `78%+`, Solid at `72-77%`, Cautious at `66-71%`, Higher Risk at `60-65%`, and No Pick below `60%`.
+
+The current hit-game gate is context only for this confidence calculation. A `5/5` streak does not directly raise the estimate, and a `3/5` profile is not automatically penalized if xBA and expected opportunity are otherwise identical. `current_gate_qualified`, `current_display_qualified`, and `gate_failures` preserve the exact production boundary for later analysis.
+
+Safeguards:
+
+- production candidate names, scores, tiers, card limits, and Discord content are unchanged
+- confidence runs over the broader pool only after production scoring finishes
+- all estimates are marked `PROVISIONAL`, `UNCALIBRATED`, and `price_included: false`
+- source fallback and low-reliability conditions are explicit flags, not silent substitutions
+- research-only profiles cannot enter `core-first-v1`, `current-v1`, or exact-delivery grading
 
 ## Current Scoring Inputs
 
@@ -171,6 +197,15 @@ New exports include `discord_delivery` metadata:
 - exact optional Value candidates
 - any legacy Thin candidates if the rollback policy was used
 
+Beginning with the confidence research checkpoint, exports also include:
+
+- `confidence_research_pool`: the broader profiles, sorted by provisional confidence
+- current production-gate status and exact failure reasons on each profile
+- full nested `confidence_estimate` and `contact_quality_shadow` data
+- top-level `hot_hits_confidence` version, calibration, price, and population metadata
+
+The report grades the broader pool when this field is present, but policy simulation filters back to `current_display_qualified` profiles. It reports observed hit rate, mean forecast, and Brier score by confidence label; current-gate pass/fail results; top-one through top-four confidence shadow cards; and successful research profiles excluded by the current gate. Older exports still grade normally from `candidates`.
+
 Grade the current policy against old history:
 
 ```bash
@@ -210,7 +245,7 @@ Production path:
 C:\Users\muski\mlb_props
 ```
 
-The existing Task Scheduler task and wrappers remain valid. No task recreation, schedule change, argument change, or wrapper edit was required for Core-first.
+The existing Task Scheduler task and wrappers remain valid. No task recreation, schedule change, argument change, wrapper edit, or new Windows environment variable is required for Core-first or confidence research. The broader-pool thresholds have code defaults and are exposed as optional `HOT_HITS_RESEARCH_*` overrides only for controlled experiments.
 
 Production user environment:
 
@@ -254,10 +289,13 @@ Expected successful-run evidence:
 - `hot_hits_report.py` requires network access for boxscore grading and can be slow across large history folders.
 - Transferred folders such as `hot_hits_from_windows/` are local analysis artifacts, not source files, and must remain uncommitted.
 - Do not change scoring and card construction simultaneously; otherwise the cause of any performance change becomes unclear.
+- The confidence percentage has not been calibrated on held-out history and does not include odds, implied probability, vig, expected value, or bankroll guidance.
+- xBA is an expected batting-average signal, not certainty; the conversion assumes similar per-at-bat opportunity and does not model each starter/bullpen plate appearance independently.
+- The broader research pool still has minimum season, recent-average, sample, and batting-order boundaries. It is broader than production, not a census of every active hitter.
 
 ## Collection Plan And Next Review
 
-Leave the current scoring and Core-first settings unchanged while collecting the next sample.
+Leave the current scoring and Core-first settings unchanged while collecting the confidence sample.
 
 Revisit after roughly 7-14 normal-slate days. Transfer:
 
@@ -277,12 +315,14 @@ At the next review:
 2. Grade exact deliveries with `--card-policy delivered`.
 3. Compare Core-only, optional Value, Core-plus-one-Value, and Core-plus-two-Value outcomes.
 4. Track DNPs separately and void-adjust parlay outcomes.
-5. Review misses by batting order, matchup, starter hit-allowed rate, season average, and last-5 average.
-6. Compare exact delivered results with a fresh `core-first-v1` replay to detect policy or scoring drift.
-7. Do not tune from abnormal or tiny slates.
-8. Keep scoring fixed unless a repeatable weakness appears across a materially larger normal-slate sample.
+5. Confirm Savant batch coverage, fallback frequency, expected-at-bat values, confidence distribution, and current-gate failure reasons.
+6. Compare confidence labels and top-one through top-four shadow cards, with DNPs void-adjusted.
+7. Measure how often high-confidence hits and misses were excluded by the current L5 gate; compare xBA/opportunity profiles rather than only outcomes.
+8. Compare exact delivered results with a fresh `core-first-v1` replay to detect policy or scoring drift.
+9. Do not tune from abnormal or tiny slates.
+10. Wait for at least 50-100 resolved research profiles before proposing confidence calibration or one isolated production-gate change.
 
-The next logical decision is not odds integration. It is whether the accumulated normal-slate evidence supports keeping the present Core/Value boundaries or making one isolated scoring or eligibility adjustment. Any proposed adjustment should first be simulated in `hot_hits_report.py` against old history, then introduced separately from presentation changes.
+The next logical decision is not odds integration. First verify that the broader pool and Savant batching are operationally reliable over 3-5 normal slates. After at least 50-100 resolved research profiles, compare confidence calibration and the outcomes of current-gate exclusions. Only then decide whether one isolated L5 gate or production-policy adjustment is justified. Any proposed production adjustment should first be simulated in `hot_hits_report.py` and introduced separately from confidence presentation.
 
 ## Validation Checkpoint
 

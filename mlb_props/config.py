@@ -191,6 +191,11 @@ class HotHitsThresholds:
     max_batters_per_team: int = 9
     include_bvp: bool = True
     include_contact_quality_shadow: bool = True
+    research_min_season_avg: float = 0.230
+    research_min_avg_last_10: float = 0.240
+    research_min_avg_last_5: float = 0.300
+    research_strong_season_avg: float = 0.250
+    research_max_batting_order: int = 7
     discord_min_score: int = 10
     discord_card_policy: str = CORE_FIRST_POLICY_VERSION
     discord_core_limit: int = 4
@@ -274,6 +279,21 @@ def load_settings() -> Settings:
                 "HOT_HITS_INCLUDE_CONTACT_SHADOW",
                 "true",
             ).strip().lower() not in {"0", "false", "no"},
+            research_min_season_avg=float(
+                os.environ.get("HOT_HITS_RESEARCH_MIN_SEASON_AVG", "0.230")
+            ),
+            research_min_avg_last_10=float(
+                os.environ.get("HOT_HITS_RESEARCH_MIN_AVG_L10", "0.240")
+            ),
+            research_min_avg_last_5=float(
+                os.environ.get("HOT_HITS_RESEARCH_MIN_AVG_L5", "0.300")
+            ),
+            research_strong_season_avg=float(
+                os.environ.get("HOT_HITS_RESEARCH_STRONG_SEASON_AVG", "0.250")
+            ),
+            research_max_batting_order=int(
+                os.environ.get("HOT_HITS_RESEARCH_MAX_BATTING_ORDER", "7")
+            ),
             discord_min_score=int(os.environ.get("HOT_HITS_DISCORD_MIN_SCORE", "10")),
             discord_card_policy=hot_hits_card_policy,
             discord_core_limit=int(os.environ.get("HOT_HITS_CORE_LIMIT", "4")),

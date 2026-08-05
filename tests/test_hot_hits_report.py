@@ -156,6 +156,117 @@ class DeliveredHotHitsPolicyTests(unittest.TestCase):
         self.assertFalse(not_delivered.discord_sim)
 
 
+class ConfidenceResearchHistoryTests(unittest.TestCase):
+    @staticmethod
+    def candidate(
+        batter_id: int,
+        batter_name: str,
+        *,
+        current_display_qualified: bool,
+    ) -> dict:
+        return {
+            "batter_id": batter_id,
+            "batter_name": batter_name,
+            "team": "DET",
+            "score": 18,
+            "batting_order": 1,
+            "avg_last_5": 0.400,
+            "avg_last_10": 0.330,
+            "season_avg": 0.290,
+            "hit_games_last_5": 4,
+            "hit_games_last_10": 8,
+            "matchup_rating": 0.25,
+            "pitcher_hits_allowed_rate_last_5": 0.280,
+            "pitcher_hits_allowed_rate_season": 0.250,
+            "pitcher_k_rate_last_5": 0.190,
+            "pitcher_walk_rate_last_5": 0.070,
+            "current_gate_qualified": current_display_qualified,
+            "current_display_qualified": current_display_qualified,
+            "gate_failures": (
+                []
+                if current_display_qualified
+                else ["L5_HIT_GAMES_BELOW_CURRENT_GATE"]
+            ),
+            "confidence_estimate": {
+                "version": "hot-hits-confidence-provisional-v1",
+                "hit_probability": 0.754,
+                "confidence_percentage": 75,
+                "label": "SOLID",
+                "reliability_weight": 0.85,
+            },
+        }
+
+    def test_research_only_rows_cannot_enter_simulated_production_card(self) -> None:
+        production = self.candidate(
+            1,
+            "Production Hitter",
+            current_display_qualified=True,
+        )
+        research_only = self.candidate(
+            2,
+            "Research Hitter",
+            current_display_qualified=False,
+        )
+
+        selected = simulated_discord_card([research_only, production])
+
+        self.assertEqual(
+            [row["batter_name"] for row in selected],
+            ["Production Hitter"],
+        )
+
+    def test_grading_uses_new_research_pool_but_keeps_production_boundary(self) -> None:
+        production = self.candidate(
+            1,
+            "Production Hitter",
+            current_display_qualified=True,
+        )
+        research_only = self.candidate(
+            2,
+            "Research Hitter",
+            current_display_qualified=False,
+        )
+        payload = {
+            "screen_date": "2026-08-04",
+            "generated_at": "2026-08-04T16:00:00+00:00",
+            "candidates": [production],
+            "confidence_research_pool": [production, research_only],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "hot_hits_confidence.json"
+            path.write_text(json.dumps(payload))
+            with patch(
+                "hot_hits_report.MlbStatsClient._load_teams",
+                return_value={},
+            ), patch(
+                "hot_hits_report.MlbStatsClient.grade_batter",
+                return_value={
+                    "result": "HIT",
+                    "hits": 1,
+                    "at_bats": 4,
+                    "plate_appearances": 4,
+                    "game_state": "Final",
+                },
+            ):
+                rows = grade_history_files([path])
+
+        self.assertEqual(len(rows), 2)
+        production_row = next(
+            row for row in rows if row.batter_name == "Production Hitter"
+        )
+        research_row = next(
+            row for row in rows if row.batter_name == "Research Hitter"
+        )
+        self.assertTrue(production_row.discord_sim)
+        self.assertTrue(production_row.current_display_qualified)
+        self.assertFalse(research_row.discord_sim)
+        self.assertFalse(research_row.current_display_qualified)
+        self.assertEqual(research_row.tier, "Research")
+        self.assertEqual(research_row.confidence_probability, 0.754)
+        self.assertEqual(research_row.confidence_percentage, 75)
+
+
 class HotHitsParlaySummaryTests(unittest.TestCase):
     @staticmethod
     def row(result: str) -> SimpleNamespace:

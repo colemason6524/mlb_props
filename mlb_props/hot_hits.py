@@ -3,7 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from .config import HotHitsThresholds, Settings
 from .hot_hits_policy import HotHitScoringInput, score_hot_hit_candidate
-from .models import BatterGameLog, BatterPitcherHistory, Game, HotHitCandidate, PitcherGameLog
+from .models import (
+    BatterGameLog,
+    BatterPitcherHistory,
+    Game,
+    HotHitCandidate,
+    HotHitsScreeningResult,
+    PitcherGameLog,
+)
 from .sources.mlb_stats_api import ProjectedBatter
 from .utils import normalize_name
 
@@ -16,9 +23,28 @@ def screen_hot_hitters(
     logs_by_pitcher: dict[str, list[PitcherGameLog]],
     batter_pitcher_history: Callable[[int | None, int | None], BatterPitcherHistory | None] | None = None,
 ) -> list[HotHitCandidate]:
+    return screen_hot_hitters_with_research(
+        settings=settings,
+        games=games,
+        projected_batters=projected_batters,
+        logs_by_batter=logs_by_batter,
+        logs_by_pitcher=logs_by_pitcher,
+        batter_pitcher_history=batter_pitcher_history,
+    ).candidates
+
+
+def screen_hot_hitters_with_research(
+    settings: Settings,
+    games: Iterable[Game],
+    projected_batters: Iterable[ProjectedBatter],
+    logs_by_batter: dict[str, list[BatterGameLog]],
+    logs_by_pitcher: dict[str, list[PitcherGameLog]],
+    batter_pitcher_history: Callable[[int | None, int | None], BatterPitcherHistory | None] | None = None,
+) -> HotHitsScreeningResult:
     thresholds = settings.hot_hits_thresholds
     starter_by_team = _starter_by_opponent_team(games)
     candidates: list[HotHitCandidate] = []
+    research_pool: list[HotHitCandidate] = []
 
     for batter in projected_batters:
         starter = starter_by_team.get(batter.team)
@@ -41,11 +67,19 @@ def screen_hot_hitters(
         hit_games_last_5 = sum(1 for log in last_5 if log.hits > 0)
         hit_games_last_10 = sum(1 for log in last_10 if log.hits > 0)
 
-        if not _passes_hot_gate(
+        gate_failures = _current_gate_failures(
             thresholds=thresholds,
             avg_last_5=avg_last_5,
             season_avg=season_avg,
             hit_games_last_5=hit_games_last_5,
+        )
+        current_gate_qualified = not gate_failures
+        if not current_gate_qualified and not _passes_research_gate(
+            thresholds=thresholds,
+            batter=batter,
+            avg_last_5=avg_last_5,
+            avg_last_10=avg_last_10,
+            season_avg=season_avg,
         ):
             continue
 
@@ -56,7 +90,11 @@ def screen_hot_hitters(
         ]
         pitcher_last_5 = pitcher_logs[:5]
         pitcher_hand = _pitcher_hand(starter, pitcher_logs)
-        bvp = batter_pitcher_history(batter.player_id, starter["pitcher_id"]) if batter_pitcher_history else None
+        bvp = (
+            batter_pitcher_history(batter.player_id, starter["pitcher_id"])
+            if batter_pitcher_history and current_gate_qualified
+            else None
+        )
         matchup_rating = _matchup_rating(pitcher_logs=pitcher_logs, pitcher_last_5=pitcher_last_5, bvp=bvp)
         score, flags = _score_candidate(
             thresholds=thresholds,
@@ -72,11 +110,10 @@ def screen_hot_hitters(
             matchup_rating=matchup_rating,
         )
 
-        if score < thresholds.min_display_score:
-            continue
-
-        candidates.append(
-            HotHitCandidate(
+        current_display_qualified = (
+            current_gate_qualified and score >= thresholds.min_display_score
+        )
+        profile = HotHitCandidate(
                 batter_name=batter.name,
                 batter_id=batter.player_id,
                 team=batter.team,
@@ -95,6 +132,7 @@ def screen_hot_hitters(
                 hit_games_last_5=hit_games_last_5,
                 hit_games_last_10=hit_games_last_10,
                 at_bats_last_5=sum(log.at_bats for log in last_5),
+                at_bats_last_10=sum(log.at_bats for log in last_10),
                 hits_last_5=sum(log.hits for log in last_5),
                 hits_last_10=sum(log.hits for log in last_10),
                 season_hits=sum(log.hits for log in logs),
@@ -108,19 +146,24 @@ def screen_hot_hitters(
                 matchup_rating=matchup_rating,
                 score=score,
                 flags=flags,
+                current_gate_qualified=current_gate_qualified,
+                current_display_qualified=current_display_qualified,
+                gate_failures=gate_failures,
             )
-        )
+        research_pool.append(profile)
+        if current_display_qualified:
+            candidates.append(profile)
 
-    return sorted(
-        candidates,
-        key=lambda item: (
-            item.score,
-            item.avg_last_5,
-            item.hit_games_last_5,
-            item.matchup_rating,
-            item.season_avg,
-        ),
-        reverse=True,
+    sort_key = lambda item: (
+        item.score,
+        item.avg_last_5,
+        item.hit_games_last_5,
+        item.matchup_rating,
+        item.season_avg,
+    )
+    return HotHitsScreeningResult(
+        candidates=sorted(candidates, key=sort_key, reverse=True),
+        research_pool=sorted(research_pool, key=sort_key, reverse=True),
     )
 
 
@@ -140,16 +183,38 @@ def _starter_by_opponent_team(games: Iterable[Game]) -> dict[str, dict]:
     return {team: starter for team, starter in starters.items() if starter["pitcher_name"]}
 
 
-def _passes_hot_gate(
+def _current_gate_failures(
     thresholds: HotHitsThresholds,
     avg_last_5: float,
     season_avg: float,
     hit_games_last_5: int,
+) -> list[str]:
+    failures: list[str] = []
+    if avg_last_5 < thresholds.hot_avg_min:
+        failures.append("L5_AVG_BELOW_CURRENT_GATE")
+    if season_avg < thresholds.min_season_avg:
+        failures.append("SEASON_AVG_BELOW_CURRENT_GATE")
+    if hit_games_last_5 < thresholds.min_recent_hit_games:
+        failures.append("L5_HIT_GAMES_BELOW_CURRENT_GATE")
+    return failures
+
+
+def _passes_research_gate(
+    thresholds: HotHitsThresholds,
+    batter: ProjectedBatter,
+    avg_last_5: float,
+    avg_last_10: float,
+    season_avg: float,
 ) -> bool:
+    batting_order = batter.batting_order or 99
+    if batting_order > thresholds.research_max_batting_order:
+        return False
+    if season_avg < thresholds.research_min_season_avg:
+        return False
     return (
-        avg_last_5 >= thresholds.hot_avg_min
-        and season_avg >= thresholds.min_season_avg
-        and hit_games_last_5 >= thresholds.min_recent_hit_games
+        season_avg >= thresholds.research_strong_season_avg
+        or avg_last_10 >= thresholds.research_min_avg_last_10
+        or avg_last_5 >= thresholds.research_min_avg_last_5
     )
 
 

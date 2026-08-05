@@ -16,6 +16,7 @@ from ..utils import fetch_text
 CONTACT_QUALITY_SHADOW_VERSION = "contact-quality-shadow-v1"
 BASEBALL_SAVANT_CSV_URL = "https://baseballsavant.mlb.com/statcast_search/csv"
 STRIKEOUT_EVENTS = {"strikeout", "strikeout_double_play"}
+DEFAULT_BATCH_SIZE = 25
 
 
 def _float(value: str | None) -> float | None:
@@ -255,6 +256,35 @@ class BaseballSavantContactSource:
 
         query_start = date(screen_date.year, 1, 1)
         query_end = screen_date - timedelta(days=1)
+        profiles: dict[int, ContactQualityShadow] = {}
+        errors: list[Exception] = []
+        for start in range(0, len(ids), DEFAULT_BATCH_SIZE):
+            batch = ids[start : start + DEFAULT_BATCH_SIZE]
+            try:
+                profiles.update(
+                    self._fetch_profile_batch(
+                        batch,
+                        screen_date=screen_date,
+                        query_start=query_start,
+                        query_end=query_end,
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+        if not profiles and errors:
+            raise RuntimeError(
+                f"All {len(errors)} Baseball Savant contact batches failed: {errors[0]}"
+            ) from errors[0]
+        return profiles
+
+    def _fetch_profile_batch(
+        self,
+        ids: list[int],
+        *,
+        screen_date: date,
+        query_start: date,
+        query_end: date,
+    ) -> dict[int, ContactQualityShadow]:
         id_digest = hashlib.sha256(",".join(map(str, ids)).encode()).hexdigest()[:16]
         cache_key = (
             f"savant_contact_{CONTACT_QUALITY_SHADOW_VERSION}_"
@@ -289,7 +319,7 @@ class BaseballSavantContactSource:
             if batter_id in rows_by_batter:
                 rows_by_batter[batter_id].append(row)
 
-        profiles = {
+        profiles: dict[int, ContactQualityShadow] = {
             batter_id: profile
             for batter_id, rows in rows_by_batter.items()
             if (

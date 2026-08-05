@@ -492,6 +492,79 @@ def render_hot_hit_candidates(candidates: Iterable[HotHitCandidate], limit: int 
     return "\n".join(output)
 
 
+def render_hot_hit_confidence_research(
+    candidates: Iterable[HotHitCandidate],
+    limit: int = 30,
+) -> str:
+    items = [item for item in candidates if item.confidence_estimate is not None][:limit]
+    headers = [
+        "Rank",
+        "Batter",
+        "Team",
+        "BO",
+        "Hit Conf",
+        "Label",
+        "Reliab",
+        "PerAB",
+        "ExpAB",
+        "xBA10",
+        "xBA Szn",
+        "Current",
+        "Current Gate",
+    ]
+    rows: list[list[str]] = []
+    for rank, item in enumerate(items, start=1):
+        estimate = item.confidence_estimate
+        contact = item.contact_quality_shadow
+        if estimate is None:
+            continue
+        current_status = (
+            policy_hot_hit_tier(item)
+            if item.current_display_qualified
+            else ("Below score" if item.current_gate_qualified else "Research")
+        )
+        rows.append(
+            [
+                f"#{rank}",
+                item.batter_name,
+                item.team,
+                str(item.batting_order) if item.batting_order is not None else "-",
+                f"{estimate.confidence_percentage}%",
+                estimate.label.title(),
+                f"{estimate.reliability_weight:.2f}",
+                f"{estimate.per_at_bat_probability:.3f}",
+                f"{estimate.expected_at_bats:.2f}",
+                f"{contact.xba_last_10_games:.3f}"
+                if contact and contact.xba_last_10_games is not None
+                else "-",
+                f"{contact.season_xba:.3f}"
+                if contact and contact.season_xba is not None
+                else "-",
+                current_status,
+                ",".join(item.gate_failures) or "Pass",
+            ]
+        )
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+
+    output = ["Hot Hits Confidence Research (shadow only):"]
+    output.append("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    output.append("  ".join("-" * widths[index] for index in range(len(headers))))
+    for row in rows:
+        output.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
+    if not rows:
+        output.append("No hitters qualified for the broader confidence research pool.")
+    output.append("")
+    output.append(
+        "Confidence is provisional, price-agnostic, and excluded from score, tier, and Discord selection. "
+        "Current Gate explains why a research profile is absent from the production board."
+    )
+    return "\n".join(output)
+
+
 def render_hot_hits_discord_digest(
     candidates: Iterable[HotHitCandidate],
     screen_date,

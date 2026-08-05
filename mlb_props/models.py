@@ -186,6 +186,21 @@ class PitcherConfidenceEstimate:
     flags: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class HotHitConfidenceEstimate:
+    version: str
+    calibration_status: str
+    hit_probability: float
+    confidence_percentage: int
+    label: str
+    per_at_bat_probability: float
+    season_anchor_probability: float
+    expected_at_bats: float
+    reliability_weight: float
+    price_included: bool = False
+    flags: list[str] = field(default_factory=list)
+
+
 @dataclass
 class Candidate:
     subject_name: str
@@ -308,6 +323,17 @@ class HotHitCandidate:
     score: int
     flags: list[str] = field(default_factory=list)
     contact_quality_shadow: ContactQualityShadow | None = None
+    at_bats_last_10: int = 0
+    current_gate_qualified: bool = True
+    current_display_qualified: bool = True
+    gate_failures: list[str] = field(default_factory=list)
+    confidence_estimate: HotHitConfidenceEstimate | None = None
+
+
+@dataclass
+class HotHitsScreeningResult:
+    candidates: list[HotHitCandidate]
+    research_pool: list[HotHitCandidate]
 
 
 @dataclass

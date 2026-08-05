@@ -8,10 +8,19 @@ from pathlib import Path
 
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
-from mlb_props.hot_hits import screen_hot_hitters
+from mlb_props.hot_hits import screen_hot_hitters_with_research
+from mlb_props.hot_hits_confidence import (
+    HOT_HITS_CONFIDENCE_MODEL_VERSION,
+    estimate_hot_hit_confidence,
+    hot_hit_confidence_sort_key,
+)
 from mlb_props.hot_hits_policy import hot_hit_tier, select_hot_hits_card
 from mlb_props.notifiers.discord import send_discord_embeds
-from mlb_props.output import render_hot_hit_candidates, render_hot_hits_discord_embeds
+from mlb_props.output import (
+    render_hot_hit_candidates,
+    render_hot_hit_confidence_research,
+    render_hot_hits_discord_embeds,
+)
 from mlb_props.sources.mlb_stats_api import (
     MlbStatsApiBatterLogsSource,
     MlbStatsApiPitcherLogsSource,
@@ -103,6 +112,19 @@ def attach_contact_quality_shadow(
     return metadata
 
 
+def attach_hot_hit_confidence(candidates) -> dict:
+    for candidate in candidates:
+        candidate.confidence_estimate = estimate_hot_hit_confidence(candidate)
+    estimates = [candidate.confidence_estimate for candidate in candidates]
+    return {
+        "version": HOT_HITS_CONFIDENCE_MODEL_VERSION,
+        "status": "available" if estimates else "no_candidates",
+        "calibration_status": "PROVISIONAL",
+        "price_included": False,
+        "profiles_ranked": len(estimates),
+    }
+
+
 def main() -> int:
     settings = load_settings()
     if settings.data_mode != "live":
@@ -128,7 +150,7 @@ def main() -> int:
     )
     logs_by_pitcher = pitcher_logs_source.fetch_logs_for_games(games, season=settings.screen_date.year)
 
-    candidates = screen_hot_hitters(
+    screening = screen_hot_hitters_with_research(
         settings=settings,
         games=games,
         projected_batters=projected_batters,
@@ -140,6 +162,8 @@ def main() -> int:
             else None
         ),
     )
+    candidates = screening.candidates
+    research_pool = screening.research_pool
 
     contact_quality_metadata = {
         "version": CONTACT_QUALITY_SHADOW_VERSION,
@@ -154,13 +178,22 @@ def main() -> int:
             JsonCache(CACHE_DIR / "savant", ttl_hours=settings.cache_ttl_hours)
         )
         contact_quality_metadata = attach_contact_quality_shadow(
-            candidates=candidates,
+            candidates=research_pool,
             logs_by_batter=logs_by_batter,
             screen_date=settings.screen_date,
             source=contact_quality_source,
         )
 
+    confidence_metadata = attach_hot_hit_confidence(research_pool)
+    confidence_ranked = sorted(
+        research_pool,
+        key=hot_hit_confidence_sort_key,
+        reverse=True,
+    )
+
     print(render_hot_hit_candidates(candidates, limit=settings.display_limit))
+    print("")
+    print(render_hot_hit_confidence_research(confidence_ranked, limit=settings.display_limit))
     print("")
     print("Hot hits run summary:")
     print(f"- Date: {settings.screen_date.isoformat()}")
@@ -168,6 +201,7 @@ def main() -> int:
     print(f"- Projected batters checked: {len(projected_batters)}")
     print(f"- Batters with logs: {sum(1 for logs in logs_by_batter.values() if logs)}")
     print(f"- Qualified candidates: {len(candidates)}")
+    print(f"- Confidence research pool: {len(research_pool)}")
     contact_status = contact_quality_metadata["status"]
     if contact_status == "source_failed":
         print(f"- Contact-quality shadow: source failed ({contact_quality_metadata['error']})")
@@ -217,11 +251,15 @@ def main() -> int:
                 "screen_date": settings.screen_date.isoformat(),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "candidates": [asdict(candidate) for candidate in candidates],
+                "confidence_research_pool": [
+                    asdict(candidate) for candidate in confidence_ranked
+                ],
                 "settings": {
                     "display_limit": settings.display_limit,
                     "hot_hits_thresholds": asdict(settings.hot_hits_thresholds),
                 },
                 "contact_quality_shadow": contact_quality_metadata,
+                "hot_hits_confidence": confidence_metadata,
                 "discord_delivery": {
                     "status": discord_status,
                     "policy_version": card_settings.discord_card_policy,

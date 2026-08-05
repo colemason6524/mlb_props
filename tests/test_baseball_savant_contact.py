@@ -193,6 +193,29 @@ class BaseballSavantContactTests(unittest.TestCase):
         self.assertIsNone(item.contact_quality_shadow)
         self.assertEqual(hot_hit_tier(item), "Core")
 
+    def test_partial_batch_failure_preserves_successful_profiles(self) -> None:
+        calls = 0
+
+        def fetcher(url: str, **kwargs) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("second batch unavailable")
+            return CSV_TEXT
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = BaseballSavantContactSource(
+                JsonCache(Path(temp_dir), ttl_hours=24),
+                fetcher=fetcher,
+            )
+            profiles = source.fetch_profiles(
+                range(101, 127),
+                screen_date=date(2026, 8, 1),
+            )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(list(profiles), [101])
+
 
 if __name__ == "__main__":
     unittest.main()
