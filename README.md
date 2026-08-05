@@ -229,6 +229,25 @@ Safeguards:
 
 Do not describe these percentages as profitable-bet probabilities or expected value. Exact FanDuel Over/Under prices are not collected. Keep normal outcome grading on singles, collect at least 50-100 resolved estimates, and verify that each confidence band behaves approximately as advertised before removing the `PROVISIONAL` label or changing tier policy.
 
+#### L5 recency research checkpoint: 2026-08-04
+
+Recent strikeout results are useful evidence, but they are not stable enough to act like a deterministic streak signal. The active model currently uses L5 in several places: K rate, opportunity, raw line deltas, hit-rate adjustments, stability, control, and workload. That means L5 can have more total influence than the visible `60% recent / 40% season` K-rate formula suggests.
+
+Schema 6 adds `recency-shadow-v1` beside every qualified candidate. It is observation-only and makes no change to production projections, qualification, signal balance, confidence shown to users, Core/Lean/Watch tier, terminal output, or Discord output.
+
+The alternative projection deliberately separates recent skill from recent prop outcomes:
+
+- K ability uses aggregate strikeouts divided by aggregate batters faced, not the average of per-game K rates
+- the shadow K-rate anchor is `50% season + 30% L10 + 20% L5`, followed by the existing matchup adjustments and a L10 walk-risk adjustment
+- projected outs remain the active workload projection because recent pitch count, role, leash, and short-start evidence should remain important
+- batters faced per out blends `60% L5 + 40% season` instead of relying entirely on L5
+- each saved shadow includes current-versus-shadow projected Ks, projected BF, side edge, and a separate provisional confidence estimate
+- all shadow logs are restricted to `game_date < screen_date` to prevent lookahead
+
+Backtests now report L5 outcome bands (`0-1/5`, `2/5`, `3/5`, `4-5/5`) with hit rate, actual outs/BF, short-outing rate, active confidence, and active-versus-shadow K error. They also compare active and shadow K/BF mean absolute error and confidence Brier score.
+
+The comparison is limited to candidates admitted by the active model and selected by the requested backtest scope. It cannot prove how excluded lines would have performed. Treat the first 3-5 normal slates as a data-quality check and wait for roughly 50-100 resolved candidates before considering any production weight change. If the shadow wins on projection error and calibration across multiple windows, activation should be a separate commit with a new `PITCHER_MODEL_VERSION`.
+
 ### Hot Hits Objective And Design
 
 The hot-hits board is a line-independent research tool for one-hit parlay candidates. It is not trying to price a sportsbook market directly. The intended workflow is:
@@ -454,13 +473,14 @@ By default, the Discord message includes Core plays plus up to three ranked Lean
 
 The daily pitcher task is the only required scheduled task. The backtest task below is optional; if it is not scheduled, `outputs\backtests` will not exist on Windows. That is expected and does not mean the daily run failed.
 
-No Task Scheduler command change is required for schema 5, the confidence/display policy, or the shadow opportunity fields. After Windows pulls the current `main`, the existing wrapper automatically writes the new metadata and rankings. A healthy current export contains:
+No Task Scheduler command change is required for schema 6, the confidence/display policy, or either pitcher shadow. After Windows pulls the current `main`, the existing wrapper automatically writes the new metadata and rankings. A healthy current export contains:
 
 ```text
-history_schema_version : 5
+history_schema_version : 6
 model_version           : pitcher-k-situational-v1
 tier_policy_version     : core-lean-watch-v1
 shadow_feature_version  : opportunity-shadow-v1
+recency_shadow_version  : recency-shadow-v1
 confidence_model_version: pitcher-confidence-provisional-v1
 display_policy_version  : provisional-confidence-rank-v1
 ```
@@ -475,7 +495,7 @@ $Latest = Get-ChildItem .\outputs\history\pitcher_props_*.json |
 $History = Get-Content $Latest.FullName -Raw | ConvertFrom-Json
 
 $History |
-  Select-Object history_schema_version, model_version, tier_policy_version, shadow_feature_version, confidence_model_version, display_policy_version, run_note
+  Select-Object history_schema_version, model_version, tier_policy_version, shadow_feature_version, recency_shadow_version, confidence_model_version, display_policy_version, run_note
 ```
 
 ### Windows Task Scheduler: Daily Pitcher Props Backtest
@@ -615,6 +635,9 @@ Shadow-only pitcher research inputs, not current scoring inputs:
 - recent workload volatility and short-start frequency
 - experimental pitch budget, batters faced, and outs
 - opportunity confidence and workload/leash warning flags
+- aggregate season, L10, and L5 strikeout rates per batter faced
+- season/L5 batters-faced-per-out and the blended BF projection
+- `recency-shadow-v1` projected K rate, strikeouts, side edge, and provisional confidence
 
 Do not add these shadow values to score or tier policy merely because they are present in history. They need outcome calibration first.
 
@@ -631,9 +654,9 @@ Do not add these shadow values to score or tier policy merely because they are p
 - If a live board comes back empty under the primary thresholds, the runner automatically retries with a softer live fallback profile so you still get a usable practice board.
 - The starter board is line-independent and is meant for daily assessment; its matchup columns are pitcher-friendly when positive and tougher when negative.
 - `EXPORT_HISTORY=true` writes backtest-ready screen snapshots to `outputs/history/`, and `python3 backtest.py` reconciles saved strikeout plays the next day.
-- Current schema-5 pitcher exports save `opportunity-shadow-v1` profiles plus `pitcher-confidence-provisional-v1` estimates and `provisional-confidence-rank-v1` display rankings, but the active production model remains `pitcher-k-situational-v1`.
+- Current schema-6 pitcher exports save `opportunity-shadow-v1` profiles, `recency-shadow-v1` alternative projections, `pitcher-confidence-provisional-v1` estimates, and `provisional-confidence-rank-v1` display rankings, but the active production model remains `pitcher-k-situational-v1`.
 - History schema changes, projection-model changes, tier-policy changes, and shadow-feature changes are versioned separately. A schema bump does not by itself mean recommendations changed.
-- Confidence and display-policy changes are versioned separately. The schema-5 bump records a probability/presentation history shape; it does not change projections, score calculations, or Core/Lean/Watch eligibility.
+- Confidence, display-policy, and recency-shadow changes are versioned separately. The schema-6 bump records additional research history; it does not change active projections, score calculations, or Core/Lean/Watch eligibility.
 - Shadow collection requires no Task Scheduler modification; pulling current `main` is sufficient.
 - An early 3-5-slate shadow review is for data-quality checks only. Use a larger 50-100-candidate sample before considering production activation.
 - Only exported displayed buckets are graded by the normal backtest scopes. `model_opinions` and `starter_board` are saved for later research, but they are not the default backtest target.
@@ -702,7 +725,7 @@ Before switching branches, preserve or commit unrelated edits. Never discard `.g
 - Read `Pitcher Props Objective And Design`, `Current scoring inputs`, `Current assumptions`, and this handoff section before changing pitcher logic.
 - Before changing Hot Hits scoring or Discord selection, read `Hot Hits Objective And Design`, `Hot Hits Review And Grading`, and `docs/HOT_HITS_HANDOFF.md`.
 - Run `git status -sb` first and preserve unrelated uncommitted work. Pitcher Props and Hot Hits intentionally share this repository.
-- Confirm the active versions in `mlb_props/version.py`. As of 2026-08-04 they are history schema `5`, model `pitcher-k-situational-v1`, tier policy `core-lean-watch-v1`, shadow feature `opportunity-shadow-v1`, confidence model `pitcher-confidence-provisional-v1`, and display policy `provisional-confidence-rank-v1`.
+- Confirm the active versions in `mlb_props/version.py`. As of 2026-08-04 they are history schema `6`, model `pitcher-k-situational-v1`, tier policy `core-lean-watch-v1`, opportunity shadow `opportunity-shadow-v1`, recency shadow `recency-shadow-v1`, confidence model `pitcher-confidence-provisional-v1`, and display policy `provisional-confidence-rank-v1`.
 - Treat opportunity estimates as observation-only for recommendation logic. Confidence and warning flags may be displayed, but they must not feed scores or tier decisions until the review gates below are met.
 - After transferring a completed Windows collection window, review all saved learning tiers with:
 
@@ -765,3 +788,7 @@ python3 backtest.py --all-history --include-watch \
 - New history exports save `confidence_research_pool`, per-profile current-gate failures and confidence estimates, and top-level confidence metadata. `hot_hits_report.py` grades the broader pool while preserving the production boundary for policy simulation.
 - Do not adjust the current gate, confidence weights, or label cutoffs from the first few slates. First verify collection coverage and missingness, then target at least 50-100 resolved research profiles across normal slates for calibration and gate-exclusion analysis.
 - The active projection and tier-policy versions remain unchanged. Existing Windows Task Scheduler definitions still require no modification.
+- L5 outcome performance was identified as potentially overrepresented because it enters the active K-rate projection, line deltas, recent hit bonuses/penalties, volatility, and several workload/risk adjustments. The working hypothesis is not that all L5 data is bad: L5 opportunity evidence should remain strong, while raw strikeout outcomes and prop hit streaks should receive less authority.
+- `mlb_props/recency_shadow.py` now records the alternative `50% season / 30% L10 / 20% L5` aggregate K/BF projection plus a season/L5 BF-per-out blend. It is leakage-safe and research-only.
+- Schema-6 backtests add L5 outcome-band auditing and current-versus-recency-shadow K MAE, BF MAE, bias, and Brier comparisons. Do not promote the formula from a short or abnormal-slate sample.
+- No scheduled-task definition change is needed for schema 6. Once deployed, the existing scheduled run will collect the new nested fields automatically.

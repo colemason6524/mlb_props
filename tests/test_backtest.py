@@ -156,5 +156,68 @@ class ConfidenceCompatibilityTests(unittest.TestCase):
         self.assertIn("observed 50.0%", rendered)
 
 
+class RecencyShadowCompatibilityTests(unittest.TestCase):
+    def test_legacy_prediction_without_recency_shadow_is_supported(self) -> None:
+        self.assertEqual(
+            backtest._recency_shadow_from_prediction({"subject_name": "Legacy"}),
+            {},
+        )
+
+    def test_recency_report_compares_projection_error_and_brier_score(self) -> None:
+        values = {field.name: None for field in fields(backtest.ResolvedPrediction)}
+        values.update(
+            {
+                "screen_date": date(2026, 8, 1),
+                "pitcher_name": "Test Pitcher",
+                "actual": 6.0,
+                "actual_batters_faced": 24,
+                "projected_batters_faced": 27.0,
+                "projected_strikeouts": 8.0,
+                "recency_shadow_version": "recency-shadow-v1",
+                "recency_shadow_projected_batters_faced": 24.5,
+                "recency_shadow_projected_strikeouts": 6.5,
+                "outcome": "win",
+                "provisional_win_probability": 0.55,
+                "recency_shadow_win_probability": 0.60,
+            }
+        )
+        row = backtest.ResolvedPrediction(**values)
+
+        rendered = "\n".join(backtest._render_recency_shadow_diagnostics([row]))
+
+        self.assertIn("Active Ks: bias -2.00, MAE 2.00", rendered)
+        self.assertIn("Shadow Ks: bias -0.50, MAE 0.50", rendered)
+        self.assertIn("Active BF MAE: 3.00", rendered)
+        self.assertIn("Shadow BF MAE: 0.50", rendered)
+        self.assertIn("active 0.202, shadow 0.160", rendered)
+
+    def test_l5_audit_separates_outcome_bands(self) -> None:
+        values = {field.name: None for field in fields(backtest.ResolvedPrediction)}
+        values.update(
+            {
+                "pitcher_name": "Cold Recent Pitcher",
+                "hits_last_5": 1,
+                "played_last_5": 5,
+                "outcome": "win",
+                "actual": 7.0,
+                "actual_outs": 18,
+                "actual_batters_faced": 25,
+                "projected_strikeouts": 6.0,
+                "recency_shadow_projected_strikeouts": 6.5,
+                "provisional_win_probability": 0.56,
+            }
+        )
+
+        rendered = "\n".join(
+            backtest._render_l5_recency_diagnostics(
+                [backtest.ResolvedPrediction(**values)]
+            )
+        )
+
+        self.assertIn("0-1/5: 1 plays, 100.0% hit", rendered)
+        self.assertIn("active K MAE 1.00", rendered)
+        self.assertIn("recency-shadow K MAE 0.50", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

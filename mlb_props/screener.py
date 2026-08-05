@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import ceil
 from statistics import mean, median, pstdev
 from types import SimpleNamespace
@@ -13,11 +13,13 @@ from .models import (
     OpportunityShadow,
     PitcherGameLog,
     PropLine,
+    RecencyProjectionShadow,
     ScreeningResult,
     StarterAssessment,
 )
 from .opportunity import build_opportunity_shadow
 from .pitcher_confidence import estimate_pitcher_confidence
+from .recency_shadow import build_recency_projection_shadow
 from .tiers import core_block_reasons
 from .utils import normalize_name
 
@@ -115,6 +117,12 @@ def screen_pitcher_props(
             avg_walk_rate_last_5=avg_walk_rate_last_5,
         )
         projected_strikeouts = round(projected_batters_faced * projected_k_rate, 1)
+        recency_shadow = build_recency_projection_shadow(
+            raw_logs,
+            line.game_date,
+            matchup_context,
+            projected_outs,
+        )
 
         line_candidates = _build_candidates(
             settings=settings,
@@ -148,6 +156,7 @@ def screen_pitcher_props(
             projected_k_rate=projected_k_rate,
             projected_strikeouts=projected_strikeouts,
             opportunity_shadow=opportunity_shadow,
+            recency_shadow=recency_shadow,
         )
         if line_candidates:
             candidates.extend(line_candidates)
@@ -197,6 +206,7 @@ def _build_candidates(
     projected_k_rate: float,
     projected_strikeouts: float,
     opportunity_shadow: OpportunityShadow,
+    recency_shadow: RecencyProjectionShadow,
 ) -> list[Candidate]:
     effective_delta_last_5 = delta_avg_last_5
     effective_delta_last_10 = delta_avg_last_10
@@ -309,6 +319,23 @@ def _build_candidates(
             opportunity_shadow=opportunity_shadow,
         )
         candidate.confidence_estimate = estimate_pitcher_confidence(candidate)
+        shadow_candidate = replace(
+            candidate,
+            projected_outs=recency_shadow.shadow_projected_outs,
+            projected_batters_faced=recency_shadow.shadow_projected_batters_faced,
+            projected_k_rate=recency_shadow.shadow_projected_k_rate,
+            projected_strikeouts=recency_shadow.shadow_projected_strikeouts,
+        )
+        shadow_edge = (
+            candidate.line - recency_shadow.shadow_projected_strikeouts
+            if candidate.side == "UNDER"
+            else recency_shadow.shadow_projected_strikeouts - candidate.line
+        )
+        candidate.recency_shadow = replace(
+            recency_shadow,
+            shadow_projection_edge=round(shadow_edge, 2),
+            confidence_estimate=estimate_pitcher_confidence(shadow_candidate),
+        )
         candidates.append(candidate)
     return candidates
 

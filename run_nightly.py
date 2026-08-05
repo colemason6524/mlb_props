@@ -32,6 +32,7 @@ from mlb_props.version import (
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
     PITCHER_OPPORTUNITY_SHADOW_VERSION,
+    PITCHER_RECENCY_SHADOW_VERSION,
     PITCHER_TIER_POLICY_VERSION,
 )
 
@@ -373,6 +374,7 @@ def main() -> int:
                 "history_schema_version": PITCHER_HISTORY_SCHEMA_VERSION,
                 "model_version": PITCHER_MODEL_VERSION,
                 "shadow_feature_version": PITCHER_OPPORTUNITY_SHADOW_VERSION,
+                "recency_shadow_version": PITCHER_RECENCY_SHADOW_VERSION,
                 "confidence_model_version": PITCHER_CONFIDENCE_MODEL_VERSION,
                 "tier_policy_version": PITCHER_TIER_POLICY_VERSION,
                 "display_policy_version": PITCHER_DISPLAY_POLICY_VERSION,

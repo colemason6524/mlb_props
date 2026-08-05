@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 # Increment the schema version when the shape of exported pitcher history changes.
-PITCHER_HISTORY_SCHEMA_VERSION = 5
+PITCHER_HISTORY_SCHEMA_VERSION = 6
 
 # Increment the model version only when projection inputs, formulas, or scoring
 # behavior change. This version names the situational model that existed before
@@ -16,6 +16,10 @@ PITCHER_TIER_POLICY_VERSION = "core-lean-watch-v1"
 # Shadow features are collected for research and may supply a display-only
 # opportunity-reliability label. They do not affect projections, scores, or tiers.
 PITCHER_OPPORTUNITY_SHADOW_VERSION = "opportunity-shadow-v1"
+
+# Recency research is versioned separately because it compares an alternative
+# K-rate/BF projection without changing the active production recommendation.
+PITCHER_RECENCY_SHADOW_VERSION = "recency-shadow-v1"
 
 # Confidence is versioned independently because it is a provisional,
 # price-agnostic probability layer and does not change the active projection.

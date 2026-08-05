@@ -201,6 +201,29 @@ class HotHitConfidenceEstimate:
     flags: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RecencyProjectionShadow:
+    version: str
+    screen_date: str
+    starts_available: int
+    starts_used_last_10: int
+    starts_used_last_5: int
+    season_k_rate: float
+    k_rate_last_10: float
+    k_rate_last_5: float
+    walk_rate_last_10: float
+    season_bf_per_out: float
+    bf_per_out_last_5: float
+    blended_bf_per_out: float
+    shadow_projected_outs: float
+    shadow_projected_batters_faced: float
+    shadow_projected_k_rate: float
+    shadow_projected_strikeouts: float
+    shadow_projection_edge: float | None = None
+    confidence_estimate: PitcherConfidenceEstimate | None = None
+    flags: list[str] = field(default_factory=list)
+
+
 @dataclass
 class Candidate:
     subject_name: str
@@ -247,6 +270,7 @@ class Candidate:
     moneyline: int | None = None
     opportunity_shadow: OpportunityShadow | None = None
     confidence_estimate: PitcherConfidenceEstimate | None = None
+    recency_shadow: RecencyProjectionShadow | None = None
 
 
 @dataclass

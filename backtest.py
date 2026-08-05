@@ -23,6 +23,7 @@ from mlb_props.version import (
     PITCHER_DISPLAY_POLICY_VERSION,
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
+    PITCHER_RECENCY_SHADOW_VERSION,
 )
 
 
@@ -56,6 +57,8 @@ class ResolvedPrediction:
     projected_batters_faced: float | None
     projected_k_rate: float | None
     projected_strikeouts: float | None
+    hits_last_5: int
+    played_last_5: int
     shadow_pitch_budget: float | None
     shadow_projected_outs: float | None
     shadow_projected_batters_faced: float | None
@@ -65,6 +68,14 @@ class ResolvedPrediction:
     provisional_win_probability: float | None
     confidence_percentage: int | None
     confidence_label: str | None
+    recency_shadow_version: str | None
+    recency_shadow_projected_outs: float | None
+    recency_shadow_projected_batters_faced: float | None
+    recency_shadow_projected_k_rate: float | None
+    recency_shadow_projected_strikeouts: float | None
+    recency_shadow_projection_edge: float | None
+    recency_shadow_win_probability: float | None
+    recency_shadow_confidence_percentage: int | None
     avg_pitch_count_last_5: float | None
     avg_outs_last_5: float | None
     avg_k_rate_last_5: float | None
@@ -372,6 +383,11 @@ def _confidence_from_prediction(prediction: dict) -> dict:
     return estimate if isinstance(estimate, dict) else {}
 
 
+def _recency_shadow_from_prediction(prediction: dict) -> dict:
+    shadow = prediction.get("recency_shadow")
+    return shadow if isinstance(shadow, dict) else {}
+
+
 def _classify_miss_type(prediction: dict, log: PitcherGameLog, outcome: str) -> str | None:
     if outcome != "loss":
         return None
@@ -535,6 +551,10 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
         outcome, edge = _resolve_outcome(prediction["side"], float(prediction["line"]), actual)
         opportunity_shadow = _opportunity_shadow_from_prediction(prediction)
         confidence_estimate = _confidence_from_prediction(prediction)
+        recency_shadow = _recency_shadow_from_prediction(prediction)
+        recency_confidence = recency_shadow.get("confidence_estimate")
+        if not isinstance(recency_confidence, dict):
+            recency_confidence = {}
         resolved.append(
             ResolvedPrediction(
                 screen_date=screen_date,
@@ -563,6 +583,8 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                 projected_batters_faced=_safe_float(prediction.get("projected_batters_faced")),
                 projected_k_rate=_safe_float(prediction.get("projected_k_rate")),
                 projected_strikeouts=_safe_float(prediction.get("projected_strikeouts")),
+                hits_last_5=int(prediction.get("hits_last_5") or 0),
+                played_last_5=int(prediction.get("played_last_5") or 0),
                 shadow_pitch_budget=_safe_float(opportunity_shadow.get("shadow_pitch_budget")),
                 shadow_projected_outs=_safe_float(
                     opportunity_shadow.get("shadow_projected_outs")
@@ -592,6 +614,34 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                 confidence_label=(
                     str(confidence_estimate["label"])
                     if confidence_estimate.get("label")
+                    else None
+                ),
+                recency_shadow_version=(
+                    str(recency_shadow["version"])
+                    if recency_shadow.get("version")
+                    else None
+                ),
+                recency_shadow_projected_outs=_safe_float(
+                    recency_shadow.get("shadow_projected_outs")
+                ),
+                recency_shadow_projected_batters_faced=_safe_float(
+                    recency_shadow.get("shadow_projected_batters_faced")
+                ),
+                recency_shadow_projected_k_rate=_safe_float(
+                    recency_shadow.get("shadow_projected_k_rate")
+                ),
+                recency_shadow_projected_strikeouts=_safe_float(
+                    recency_shadow.get("shadow_projected_strikeouts")
+                ),
+                recency_shadow_projection_edge=_safe_float(
+                    recency_shadow.get("shadow_projection_edge")
+                ),
+                recency_shadow_win_probability=_safe_float(
+                    recency_confidence.get("win_probability")
+                ),
+                recency_shadow_confidence_percentage=(
+                    int(recency_confidence["confidence_percentage"])
+                    if recency_confidence.get("confidence_percentage") is not None
                     else None
                 ),
                 avg_pitch_count_last_5=_safe_float(prediction.get("avg_pitch_count_last_5")),
@@ -871,6 +921,135 @@ def _render_projection_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
         f"- Opportunity-related losses: {len(opportunity_losses)}/{len(losses)} "
         f"({(len(opportunity_losses) / len(losses) * 100):.1f}%)"
     )
+    return lines
+
+
+def _l5_hit_band(row: ResolvedPrediction) -> str:
+    if row.played_last_5 <= 0:
+        return "unknown"
+    rate = row.hits_last_5 / row.played_last_5
+    if rate < 0.40:
+        return "0-1/5"
+    if rate < 0.60:
+        return "2/5"
+    if rate < 0.80:
+        return "3/5"
+    return "4-5/5"
+
+
+def _render_l5_recency_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
+    bands: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in rows:
+        bands[_l5_hit_band(row)].append(row)
+    lines = ["L5 outcome-recency audit:"]
+    for label in ("0-1/5", "2/5", "3/5", "4-5/5", "unknown"):
+        band_rows = bands.get(label)
+        if not band_rows:
+            continue
+        active_ks_rows = [row for row in band_rows if row.projected_strikeouts is not None]
+        shadow_ks_rows = [
+            row for row in band_rows if row.recency_shadow_projected_strikeouts is not None
+        ]
+        active_mae = (
+            mean(abs(row.actual - row.projected_strikeouts) for row in active_ks_rows)
+            if active_ks_rows
+            else None
+        )
+        shadow_mae = (
+            mean(
+                abs(row.actual - row.recency_shadow_projected_strikeouts)
+                for row in shadow_ks_rows
+            )
+            if shadow_ks_rows
+            else None
+        )
+        avg_confidence = mean(
+            row.provisional_win_probability
+            for row in band_rows
+            if row.provisional_win_probability is not None
+        ) if any(row.provisional_win_probability is not None for row in band_rows) else None
+        short_rate = sum(row.actual_outs < 15 for row in band_rows) / len(band_rows)
+        detail = (
+            f"{len(band_rows)} plays, {(_hit_rate(band_rows) * 100):.1f}% hit, "
+            f"actual outs {mean(row.actual_outs for row in band_rows):.1f}, "
+            f"BF {mean(row.actual_batters_faced for row in band_rows):.1f}, "
+            f"short outings {short_rate * 100:.1f}%"
+        )
+        if avg_confidence is not None:
+            detail += f", avg active confidence {avg_confidence * 100:.1f}%"
+        if active_mae is not None:
+            detail += f", active K MAE {active_mae:.2f}"
+        if shadow_mae is not None:
+            detail += f", recency-shadow K MAE {shadow_mae:.2f}"
+        lines.append(f"- {label}: {detail}")
+    return lines
+
+
+def _render_recency_shadow_diagnostics(rows: list[ResolvedPrediction]) -> list[str]:
+    shadow_rows = [
+        row
+        for row in rows
+        if row.recency_shadow_projected_strikeouts is not None
+    ]
+    if not shadow_rows:
+        return []
+
+    versions = Counter(row.recency_shadow_version or "unknown" for row in shadow_rows)
+    version_text = ", ".join(f"{version} {count}" for version, count in sorted(versions.items()))
+    lines = [
+        "Recency projection shadow (research only):",
+        f"- Matched saved candidates: {len(shadow_rows)} ({version_text})",
+        "- Scope note: this compares only candidates admitted by the active model; it does not measure excluded lines.",
+    ]
+
+    active_rows = [row for row in shadow_rows if row.projected_strikeouts is not None]
+    if active_rows:
+        active_errors = [row.actual - row.projected_strikeouts for row in active_rows]
+        lines.append(
+            f"- Active Ks: bias {mean(active_errors):+.2f}, MAE "
+            f"{mean(abs(error) for error in active_errors):.2f}"
+        )
+    shadow_errors = [row.actual - row.recency_shadow_projected_strikeouts for row in shadow_rows]
+    lines.append(
+        f"- Shadow Ks: bias {mean(shadow_errors):+.2f}, MAE "
+        f"{mean(abs(error) for error in shadow_errors):.2f}"
+    )
+
+    active_bf_rows = [row for row in shadow_rows if row.projected_batters_faced is not None]
+    shadow_bf_rows = [
+        row for row in shadow_rows if row.recency_shadow_projected_batters_faced is not None
+    ]
+    if active_bf_rows:
+        lines.append(
+            "- Active BF MAE: "
+            f"{mean(abs(row.actual_batters_faced - row.projected_batters_faced) for row in active_bf_rows):.2f}"
+        )
+    if shadow_bf_rows:
+        lines.append(
+            "- Shadow BF MAE: "
+            f"{mean(abs(row.actual_batters_faced - row.recency_shadow_projected_batters_faced) for row in shadow_bf_rows):.2f}"
+        )
+
+    confidence_rows = [
+        row
+        for row in shadow_rows
+        if row.outcome != "push"
+        and row.provisional_win_probability is not None
+        and row.recency_shadow_win_probability is not None
+    ]
+    if confidence_rows:
+        active_brier = mean(
+            (row.provisional_win_probability - (1.0 if row.outcome == "win" else 0.0)) ** 2
+            for row in confidence_rows
+        )
+        shadow_brier = mean(
+            (row.recency_shadow_win_probability - (1.0 if row.outcome == "win" else 0.0)) ** 2
+            for row in confidence_rows
+        )
+        lines.append(
+            f"- Confidence Brier (lower is better): active {active_brier:.3f}, "
+            f"shadow {shadow_brier:.3f} over {len(confidence_rows)} graded decisions"
+        )
     return lines
 
 
@@ -1196,7 +1375,8 @@ def main() -> int:
         f"- Current report code: model {PITCHER_MODEL_VERSION}; "
         f"history schema {PITCHER_HISTORY_SCHEMA_VERSION}; "
         f"display policy {PITCHER_DISPLAY_POLICY_VERSION}; "
-        f"confidence {PITCHER_CONFIDENCE_MODEL_VERSION}"
+        f"confidence {PITCHER_CONFIDENCE_MODEL_VERSION}; "
+        f"recency shadow {PITCHER_RECENCY_SHADOW_VERSION}"
     )
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
     lines.append(f"- Finished predictions graded: {len(resolved)}")
@@ -1225,6 +1405,12 @@ def main() -> int:
         lines.append("")
         lines.extend(_render_projection_diagnostics(resolved))
         lines.append("")
+        lines.extend(_render_l5_recency_diagnostics(resolved))
+        lines.append("")
+        recency_lines = _render_recency_shadow_diagnostics(resolved)
+        if recency_lines:
+            lines.extend(recency_lines)
+            lines.append("")
         shadow_lines = _render_shadow_opportunity_diagnostics(resolved)
         if shadow_lines:
             lines.extend(shadow_lines)
