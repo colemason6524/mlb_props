@@ -324,9 +324,9 @@ At the next review:
 
 The next logical decision is not odds integration. First verify that the broader pool and Savant batching are operationally reliable over 3-5 normal slates. After at least 50-100 resolved research profiles, compare confidence calibration and the outcomes of current-gate exclusions. Only then decide whether one isolated L5 gate or production-policy adjustment is justified. Any proposed production adjustment should first be simulated in `hot_hits_report.py` and introduced separately from confidence presentation.
 
-## Validation Checkpoint
+## Validation Checkpoints
 
-At implementation completion:
+Core-first implementation:
 
 - 35 repository tests passed
 - Python compilation passed
@@ -334,3 +334,15 @@ At implementation completion:
 - no Thin selections appeared
 - no rendered card exceeded the intended compact limits
 - current scoring parity was retained while card construction changed
+
+Confidence research deployment on 2026-08-04:
+
+- commit `7986175` was fast-forwarded to `main` and pulled by the Windows production checkout
+- 65 repository tests passed locally; the 33 focused Hot Hits tests passed on Windows
+- Python compilation and staged-diff checks passed
+- a Windows no-Discord/no-export live run preserved 15 production candidates while collecting 127 confidence research profiles
+- Baseball Savant coverage was `127/127` through 2026-08-03; the run completed without fallback profiles
+- the existing `MLB_hot_hits` task action still points to `scripts\run_hot_hits_task.cmd`, last result was `0`, and the next run remained scheduled for 11:30 AM
+- no scheduled-task definition or new Windows environment variable was required
+- the updated report successfully graded the existing Aug. 2-4 pre-confidence exports, confirming backward compatibility
+- the local Mac live attempt stalled in the pre-existing MLB batter-log fetch before reaching confidence enrichment; it was stopped with Discord and history export disabled
