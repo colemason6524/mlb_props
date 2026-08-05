@@ -12,7 +12,13 @@ from .hot_hits_policy import (
     select_hot_hits_card,
 )
 from .models import Candidate, HotHitCandidate, StarterAssessment
-from .tiers import candidate_tier
+from .pitcher_presentation import (
+    BEST_AVAILABLE_LIMIT,
+    PitcherPresentation,
+    build_pitcher_presentations,
+    opportunity_reliability,
+)
+from .tiers import side_projection_edge
 
 
 FLAG_LABELS = {
@@ -49,6 +55,21 @@ FLAG_LABELS = {
     "MATCHUP_K_PLUS": "OppK+",
     "MATCHUP_K_MINUS": "OppK-",
     "OPP_OUTS_PLUS": "OppOuts+",
+    "NO_START_DATA": "NoStartData",
+    "THIN_START_SAMPLE": "ThinStartSample",
+    "LIMITED_START_SAMPLE": "LimitedStartSample",
+    "LONG_LAYOFF": "LongLayoff",
+    "QUICK_RETURN": "QuickReturn",
+    "VERY_LOW_RECENT_PITCH_COUNT": "VeryLowRecentPitch",
+    "LOW_RECENT_PITCH_COUNT": "LowRecentPitch",
+    "WORKLOAD_RAMP": "WorkloadRamp",
+    "WORKLOAD_DECLINE": "WorkloadDecline",
+    "PITCH_COUNT_VOLATILE": "PitchCountVolatile",
+    "OUTS_VOLATILE": "OutsVolatile",
+    "MULTIPLE_SHORT_STARTS": "MultipleShortStarts",
+    "RECENT_SHORT_START": "RecentShortStart",
+    "MIXED_RECENT_ROLE": "MixedRecentRole",
+    "INCOMPLETE_BF_DATA": "IncompleteBFData",
     "HOT": "Hot",
     "VERY_HOT": "VeryHot",
     "HIT_STREAK": "HitStreak",
@@ -74,42 +95,71 @@ def render_candidates(
     lean_min_score: int = 4,
     watch_min_score: int = 0,
 ) -> str:
-    all_candidates = list(candidates)
-    core_candidates = sorted(
-        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "core"),
-        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
-        reverse=True,
+    presentations = build_pitcher_presentations(
+        candidates,
+        min_score=min_score,
+        lean_min_score=lean_min_score,
+        watch_min_score=watch_min_score,
     )
-    lean_candidates = sorted(
-        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "lean"),
-        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
-        reverse=True,
-    )
-    watch_candidates = sorted(
-        (candidate for candidate in all_candidates if candidate_tier(candidate, min_score, lean_min_score, watch_min_score) == "watch"),
-        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.hits_last_5, item.delta_avg_last_5),
-        reverse=True,
-    )
+    core = [item for item in presentations if item.recommendation_tier == "core"]
+    leans = [item for item in presentations if item.recommendation_tier == "lean"]
+    watch = [item for item in presentations if item.recommendation_tier == "watch"]
+    best_available = [item for item in presentations if item.display_role == "best_available"]
 
-    sections: list[tuple[str, list[Candidate]]] = []
-    if core_candidates:
-        sections.append(("Core Plays", core_candidates[:limit]))
-    if lean_candidates:
-        sections.append(("Leans", lean_candidates[:limit]))
-    if watch_candidates:
-        sections.append(("Watchlist", watch_candidates[:limit]))
+    rendered_sections: list[str] = []
+    if core:
+        top = presentations[0]
+        rendered_sections.append(
+            f"Slate read: {len(core)} Core play(s). Top of slate is #{top.slate_rank} "
+            f"{top.candidate.subject_name} {top.candidate.side} {top.candidate.line:.1f} "
+            f"at provisional confidence {top.confidence_estimate.confidence_percentage}%."
+        )
+    elif best_available:
+        top = best_available[0]
+        rendered_sections.append(
+            "Slate read: No Core plays cleared the absolute standard. "
+            f"Best available is #{top.slate_rank} {top.candidate.subject_name} "
+            f"{top.candidate.side} {top.candidate.line:.1f} "
+            f"at provisional confidence {top.confidence_estimate.confidence_percentage}% "
+            f"({top.recommendation_tier.title()}); it is not promoted to Core."
+        )
+    else:
+        rendered_sections.append(
+            "Slate read: No Core, Lean, or Watch candidates cleared the display floor."
+        )
+    rendered_sections.append("")
+
+    sections: list[tuple[str, list[PitcherPresentation]]] = []
+    if core:
+        sections.append(("Core Plays", core[:limit]))
+        if leans:
+            sections.append(("Leans", leans[:limit]))
+        if watch:
+            sections.append(("Watchlist", watch[:limit]))
+    elif best_available:
+        best_ids = {id(item.candidate) for item in best_available}
+        sections.append(("Best Available (Lean/Watch; not Core)", best_available[:limit]))
+        remaining_leans = [item for item in leans if id(item.candidate) not in best_ids]
+        remaining_watch = [item for item in watch if id(item.candidate) not in best_ids]
+        if remaining_leans:
+            sections.append(("Additional Leans", remaining_leans[:limit]))
+        if remaining_watch:
+            sections.append(("Additional Watchlist", remaining_watch[:limit]))
     if not sections:
         sections.append(("Candidates", []))
 
-    rendered_sections: list[str] = []
     for title, items in sections:
         rendered_sections.append(f"{title}:")
         rendered_sections.extend(_render_table(items))
         rendered_sections.append("")
 
     rendered_sections.append(
-        "Legend: Proj = today's projected value for that prop; Proj Outs/BF = projected outs and batters faced opportunity; "
-        "Edge = projected value minus posted line; L5/L10 Hit = side-specific recent hit counts; "
+        "Legend: Provisional Conf is the price-agnostic estimated chance that the listed side clears the posted line; it is not yet calibrated. "
+        "Rank follows that estimate within today's eligible board; Tier remains the absolute Core/Lean/Watch recommendation. "
+        "Signal is retained as an internal additive diagnostic, not a probability. "
+        "Work Rel is display-only workload reliability and does not change the tier. "
+        "Proj = today's projected value; Side Edge is positive when the projection supports the listed side; "
+        "Proj Outs/BF = projected opportunity; L5/L10 Hit = side-specific recent hit counts; "
         "Avg/Med = rolling strikeout production; Pitch = average pitches thrown; Outs = average outs recorded; "
         "KRate/BBRate = recent strikeout and walk rates by batter faced; Stab = lower recent volatility is better; "
         "Match = blended matchup rating from opponent strikeout tendency, patience, offensive quality, and expected leash context."
@@ -126,8 +176,9 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
         "Hand",
         "Ks Line",
         "Lean",
-        "Edge",
-        "Score",
+        "Side Edge",
+        "Signal",
+        "Work Rel",
         "Status",
         "Starts",
         "Ks L5",
@@ -157,8 +208,9 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
                 item.hand or "-",
                 f"{item.strikeout_line:.1f}" if item.strikeout_line is not None else "-",
                 item.lean_side or "-",
-                f"{item.lean_edge:+.2f}" if item.lean_edge is not None else "-",
+                f"{_starter_side_edge(item):+.2f}" if item.lean_edge is not None else "-",
                 str(item.lean_score) if item.lean_score is not None else "-",
+                opportunity_reliability(item),
                 _display_shortlist_status(item),
                 str(item.season_starts),
                 f"{item.avg_strikeouts_last_5:.1f}",
@@ -195,7 +247,8 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
     output.append("")
     output.append(
         "Starter board legend: Ks Line is the posted strikeout line when available; Lean is the model side for that line; "
-        "Edge is the raw gap between Projected Ks and the posted line; Score uses the same strikeout over/under scoring logic as the shortlist; "
+        "Side Edge is positive when the projection supports the listed side; Signal is the same internal additive balance used by the shortlist, not a confidence percentage; "
+        "Work Rel is display-only workload reliability and does not change recommendation tier; "
         "Status shows whether the play qualified, was blocked by the shortlist gate, or just missed the display cutoff. "
         "Ks/Outs Szn = season anchors and Ks/Outs L5 = recent form check; Proj KRate/Ks/Outs/BF = today's projected strikeout rate, strikeouts, outs, and batters faced opportunity."
     )
@@ -214,71 +267,95 @@ def render_pitcher_props_discord_embeds(
     core_limit: int = 5,
     watch_limit: int = 5,
 ) -> list[dict]:
-    items = list(candidates)
-    sorted_items = sorted(
-        items,
-        key=lambda item: (item.score, abs(item.projected_strikeouts - item.line), item.projected_outs),
-        reverse=True,
+    presentations = build_pitcher_presentations(
+        candidates,
+        min_score=min_score,
+        lean_min_score=lean_min_score,
+        watch_min_score=watch_min_score,
     )
     core = [
         item
-        for item in sorted_items
-        if candidate_tier(item, min_score, lean_min_score, watch_min_score) == "core"
+        for item in presentations
+        if item.recommendation_tier == "core"
     ][:core_limit]
-    watch = [
+    alternatives = [
         item
-        for item in sorted_items
-        if candidate_tier(item, min_score, lean_min_score, watch_min_score) in {"lean", "watch"}
-    ][:watch_limit]
+        for item in presentations
+        if item.recommendation_tier in {"lean", "watch"}
+    ][: min(watch_limit, BEST_AVAILABLE_LIMIT)]
 
     description = (
         f"{prop_line_count} prop lines across {games_count} games. "
         f"Coverage `{coverage_status}`. "
-        "Core is the stricter board; Watchlist is five names worth monitoring, not auto-plays."
+        "Tier is the absolute recommendation; # rank is relative to today's eligible board. "
+        "Confidence is provisional and price-agnostic; workload reliability is display-only."
     )
     embed = {
         "title": f"MLB Pitcher Props - {screen_date}",
         "description": description,
-        "color": _pitcher_props_embed_color(core, watch, coverage_status),
+        "color": _pitcher_props_embed_color(
+            [item.candidate for item in core],
+            [item.candidate for item in alternatives],
+            coverage_status,
+        ),
         "fields": [],
-        "footer": {"text": "Confirm line availability and game status before locking. Saved by scheduled pregame run."},
+        "footer": {
+            "text": (
+                "Confidence is provisional and excludes sportsbook price. "
+                "Confirm line availability and game status before locking."
+            )
+        },
     }
 
     if not core:
         embed["fields"].append(
             {
-                "name": "Core Plays",
-                "value": "No core plays cleared today's score threshold.",
+                "name": "Core Standard",
+                "value": (
+                    "No Core plays cleared the absolute standard. "
+                    "Ranked alternatives below remain Lean/Watch and are not promoted to Core."
+                ),
                 "inline": False,
             }
         )
     else:
-        for item in core:
+        for presentation in core:
+            item = presentation.candidate
             prop_label = _pitcher_prop_label(item)
             embed["fields"].append(
                 {
-                    "name": f"Core | {item.subject_name} {item.side} {item.line:.1f} {prop_label} - Score {item.score}",
-                    "value": _pitcher_prop_embed_value(item),
+                    "name": (
+                        f"#{presentation.slate_rank} {presentation.confidence_estimate.label.title()} "
+                        f"{presentation.confidence_estimate.confidence_percentage}% | Core | {item.subject_name} "
+                        f"{item.side} {item.line:.1f} {prop_label}"
+                    ),
+                    "value": _pitcher_prop_embed_value(presentation),
                     "inline": False,
                 }
             )
 
-    if not watch:
+    if not alternatives:
         embed["fields"].append(
             {
-                "name": "Five To Watch",
-                "value": "No watchlist names cleared the display floor.",
+                "name": "Ranked Alternatives",
+                "value": "No Lean or Watch candidates cleared the display floor.",
                 "inline": False,
             }
         )
     else:
-        for item in watch:
-            label = "Lean" if candidate_tier(item, min_score, lean_min_score, watch_min_score) == "lean" else "Watch"
+        for presentation in alternatives:
+            item = presentation.candidate
+            label = presentation.recommendation_tier.title()
+            role = "Best Available" if presentation.display_role == "best_available" else label
             prop_label = _pitcher_prop_label(item)
             embed["fields"].append(
                 {
-                    "name": f"{label} | {item.subject_name} {item.side} {item.line:.1f} {prop_label} - Score {item.score}",
-                    "value": _pitcher_prop_embed_value(item),
+                    "name": (
+                        f"#{presentation.slate_rank} {presentation.confidence_estimate.label.title()} "
+                        f"{presentation.confidence_estimate.confidence_percentage}% | {role} ({label}) | "
+                        f"{item.subject_name} {item.side} {item.line:.1f} {prop_label}"
+                    ),
+                    "value": _pitcher_prop_embed_value(presentation),
                     "inline": False,
                 }
             )
@@ -286,16 +363,25 @@ def render_pitcher_props_discord_embeds(
     return [embed]
 
 
-def _pitcher_prop_embed_value(item: Candidate) -> str:
+def _pitcher_prop_embed_value(presentation: PitcherPresentation) -> str:
+    item = presentation.candidate
     flags = ", ".join(_display_flag(flag) for flag in item.flags[:6]) or "-"
+    opportunity_flags = "-"
+    if item.opportunity_shadow is not None:
+        opportunity_flags = (
+            ", ".join(_display_flag(flag) for flag in item.opportunity_shadow.flags[:4])
+            or "None flagged"
+        )
     projected = item.projected_outs if item.prop_type == "PITCHER_OUTS_RECORDED" else item.projected_strikeouts
     return (
-        f"`{item.team}` vs `{item.opponent}` | Proj `{projected:.1f}` "
-        f"| Edge `{projected - item.line:+.1f}` | Match `{item.matchup_rating:+.2f}`\n"
+        f"`{item.team}` vs `{item.opponent}` | Model `{projected:.1f}` "
+        f"| Side edge `{side_projection_edge(item):+.1f}` | Workload `{presentation.opportunity_reliability}`\n"
         f"Outs `{item.projected_outs:.1f}` | BF `{item.projected_batters_faced:.1f}` "
         f"| KRate `{item.projected_k_rate:.3f}` | L5 `{item.hits_last_5}/{item.played_last_5}` "
         f"| L10 `{item.hits_last_10}/{item.played_last_10}`\n"
-        f"Flags: {flags}"
+        f"Match `{item.matchup_rating:+.2f}`\n"
+        f"Signals: {flags}\n"
+        f"Opportunity flags: {opportunity_flags}"
     )
 
 
@@ -630,8 +716,10 @@ def _hot_hits_embed_color(items: list[HotHitCandidate]) -> int:
     return 0x95A5A6
 
 
-def _render_table(candidates: list[Candidate]) -> list[str]:
+def _render_table(presentations: list[PitcherPresentation]) -> list[str]:
     headers = [
+        "Rank",
+        "Tier",
         "Pitcher",
         "Team",
         "Opp",
@@ -639,10 +727,13 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
         "Side",
         "Line",
         "Proj",
-        "Edge",
+        "Side Edge",
         "Proj Outs",
         "Proj BF",
-        "Score",
+        "Conf",
+        "Conf Label",
+        "Signal",
+        "Work Rel",
         "L5 Hit",
         "L10 Hit",
         "Avg L5",
@@ -657,10 +748,13 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
         "Flags",
     ]
     rows: list[list[str]] = []
-    for candidate in candidates:
+    for presentation in presentations:
+        candidate = presentation.candidate
         projected_value = candidate.projected_strikeouts if candidate.prop_type == "PITCHER_STRIKEOUTS" else candidate.projected_outs
         rows.append(
             [
+                f"#{presentation.slate_rank}",
+                presentation.recommendation_tier.title(),
                 candidate.subject_name,
                 candidate.team,
                 candidate.opponent,
@@ -668,10 +762,13 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
                 candidate.side,
                 f"{candidate.line:.1f}",
                 f"{projected_value:.1f}",
-                f"{projected_value - candidate.line:+.2f}",
+                f"{side_projection_edge(candidate):+.2f}",
                 f"{candidate.projected_outs:.1f}",
                 f"{candidate.projected_batters_faced:.1f}",
-                str(candidate.score),
+                f"{presentation.confidence_estimate.confidence_percentage}%",
+                presentation.confidence_estimate.label.title(),
+                f"{candidate.score:+d}",
+                presentation.opportunity_reliability,
                 f"{candidate.hits_last_5}/{candidate.played_last_5}",
                 f"{candidate.hits_last_10}/{candidate.played_last_10}",
                 f"{candidate.avg_last_5:.1f}",
@@ -698,8 +795,13 @@ def _render_table(candidates: list[Candidate]) -> list[str]:
     for row in rows:
         output.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
     if not rows:
-        output.append("No pitcher props qualified for the current model and score threshold.")
+        output.append("No pitcher props cleared the Core/Lean/Watch display floor.")
     return output
+
+
+def _starter_side_edge(item: StarterAssessment) -> float:
+    edge = float(item.lean_edge or 0.0)
+    return -edge if item.lean_side == "UNDER" else edge
 
 
 def _display_prop_name(prop_type: str) -> str:

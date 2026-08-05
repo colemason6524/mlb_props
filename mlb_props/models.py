@@ -171,6 +171,21 @@ class ContactQualityShadow:
     flags: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class PitcherConfidenceEstimate:
+    version: str
+    calibration_status: str
+    win_probability: float
+    confidence_percentage: int
+    label: str
+    projected_mean: float
+    projected_standard_deviation: float
+    raw_win_probability: float
+    reliability_weight: float
+    price_included: bool = False
+    flags: list[str] = field(default_factory=list)
+
+
 @dataclass
 class Candidate:
     subject_name: str
@@ -216,6 +231,7 @@ class Candidate:
     park_run_factor: float | None = None
     moneyline: int | None = None
     opportunity_shadow: OpportunityShadow | None = None
+    confidence_estimate: PitcherConfidenceEstimate | None = None
 
 
 @dataclass

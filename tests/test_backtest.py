@@ -129,5 +129,32 @@ class OpportunityShadowCompatibilityTests(unittest.TestCase):
         self.assertIn("STABLE_ROLE: 1 plays", rendered)
 
 
+class ConfidenceCompatibilityTests(unittest.TestCase):
+    def test_legacy_prediction_without_confidence_is_supported(self) -> None:
+        self.assertEqual(backtest._confidence_from_prediction({"subject_name": "Legacy"}), {})
+
+    def test_confidence_report_shows_forecast_and_observed_rate(self) -> None:
+        rows = []
+        for outcome in ("win", "loss"):
+            values = {field.name: None for field in fields(backtest.ResolvedPrediction)}
+            values.update(
+                {
+                    "screen_date": date(2026, 8, 1),
+                    "pitcher_name": "Test Pitcher",
+                    "outcome": outcome,
+                    "provisional_win_probability": 0.60,
+                    "confidence_percentage": 60,
+                }
+            )
+            rows.append(backtest.ResolvedPrediction(**values))
+
+        rendered = "\n".join(backtest._render_confidence_calibration(rows))
+
+        self.assertIn("Graded estimates: 2", rendered)
+        self.assertIn("60%+: 2 plays", rendered)
+        self.assertIn("avg forecast 60.0%", rendered)
+        self.assertIn("observed 50.0%", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

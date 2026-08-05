@@ -19,6 +19,8 @@ from mlb_props.sources.mlb_stats_api import (
 )
 from mlb_props.utils import normalize_name, normalize_team_abbr
 from mlb_props.version import (
+    PITCHER_CONFIDENCE_MODEL_VERSION,
+    PITCHER_DISPLAY_POLICY_VERSION,
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
 )
@@ -59,6 +61,10 @@ class ResolvedPrediction:
     shadow_projected_batters_faced: float | None
     opportunity_confidence: str | None
     opportunity_flags: list[str]
+    confidence_model_version: str | None
+    provisional_win_probability: float | None
+    confidence_percentage: int | None
+    confidence_label: str | None
     avg_pitch_count_last_5: float | None
     avg_outs_last_5: float | None
     avg_k_rate_last_5: float | None
@@ -361,6 +367,11 @@ def _opportunity_shadow_from_prediction(prediction: dict) -> dict:
     return shadow if isinstance(shadow, dict) else {}
 
 
+def _confidence_from_prediction(prediction: dict) -> dict:
+    estimate = prediction.get("confidence_estimate")
+    return estimate if isinstance(estimate, dict) else {}
+
+
 def _classify_miss_type(prediction: dict, log: PitcherGameLog, outcome: str) -> str | None:
     if outcome != "loss":
         return None
@@ -523,6 +534,7 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
         actual = float(matching_log.strikeouts)
         outcome, edge = _resolve_outcome(prediction["side"], float(prediction["line"]), actual)
         opportunity_shadow = _opportunity_shadow_from_prediction(prediction)
+        confidence_estimate = _confidence_from_prediction(prediction)
         resolved.append(
             ResolvedPrediction(
                 screen_date=screen_date,
@@ -564,6 +576,24 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                     else None
                 ),
                 opportunity_flags=list(opportunity_shadow.get("flags") or []),
+                confidence_model_version=(
+                    str(confidence_estimate["version"])
+                    if confidence_estimate.get("version")
+                    else None
+                ),
+                provisional_win_probability=_safe_float(
+                    confidence_estimate.get("win_probability")
+                ),
+                confidence_percentage=(
+                    int(confidence_estimate["confidence_percentage"])
+                    if confidence_estimate.get("confidence_percentage") is not None
+                    else None
+                ),
+                confidence_label=(
+                    str(confidence_estimate["label"])
+                    if confidence_estimate.get("label")
+                    else None
+                ),
                 avg_pitch_count_last_5=_safe_float(prediction.get("avg_pitch_count_last_5")),
                 avg_outs_last_5=_safe_float(prediction.get("avg_outs_last_5")),
                 avg_k_rate_last_5=_safe_float(prediction.get("avg_k_rate_last_5")),
@@ -628,7 +658,7 @@ def _render_score_bands(rows: list[ResolvedPrediction]) -> list[str]:
     for row in rows:
         bands[_score_band(row.score)].append(row)
     ordered_labels = [label for label in ["-5 or worse", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11+"] if label in bands]
-    lines = ["Score bands:"]
+    lines = ["Signal balance bands:"]
     for label in ordered_labels:
         band_rows = bands[label]
         pushes = sum(1 for row in band_rows if row.outcome == "push")
@@ -966,6 +996,53 @@ def _render_shadow_opportunity_diagnostics(
     return lines
 
 
+def _confidence_band(percentage: int) -> str:
+    if percentage >= 60:
+        return "60%+"
+    if percentage >= 57:
+        return "57-59%"
+    if percentage >= 54:
+        return "54-56%"
+    if percentage >= 51:
+        return "51-53%"
+    return "50%"
+
+
+def _render_confidence_calibration(rows: list[ResolvedPrediction]) -> list[str]:
+    graded = [
+        row
+        for row in rows
+        if row.provisional_win_probability is not None
+        and row.confidence_percentage is not None
+        and row.outcome in {"win", "loss"}
+    ]
+    if not graded:
+        return []
+
+    lines = ["Provisional confidence calibration:"]
+    brier_score = mean(
+        (row.provisional_win_probability - (1.0 if row.outcome == "win" else 0.0)) ** 2
+        for row in graded
+    )
+    lines.append(f"- Graded estimates: {len(graded)}")
+    lines.append(f"- Brier score: {brier_score:.3f} (lower is better; provisional only)")
+
+    by_band: dict[str, list[ResolvedPrediction]] = defaultdict(list)
+    for row in graded:
+        by_band[_confidence_band(row.confidence_percentage)].append(row)
+    for band in ("60%+", "57-59%", "54-56%", "51-53%", "50%"):
+        band_rows = by_band.get(band)
+        if not band_rows:
+            continue
+        average_forecast = mean(row.provisional_win_probability for row in band_rows) * 100
+        observed_rate = sum(1 for row in band_rows if row.outcome == "win") / len(band_rows) * 100
+        lines.append(
+            f"- {band}: {len(band_rows)} plays, avg forecast {average_forecast:.1f}%, "
+            f"observed {observed_rate:.1f}%, gap {observed_rate - average_forecast:+.1f} pts"
+        )
+    return lines
+
+
 def _render_loss_review(rows: list[ResolvedPrediction], max_rows: int = 12) -> list[str]:
     losses = [row for row in rows if row.outcome == "loss"]
     lines = ["Loss review:"]
@@ -988,7 +1065,7 @@ def _render_loss_review(rows: list[ResolvedPrediction], max_rows: int = 12) -> l
             for label in ["-5 or worse", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11+"]
             if label in score_counts
         )
-        lines.append(f"- Score bands: {rendered}")
+        lines.append(f"- Signal balance bands: {rendered}")
     if edge_counts:
         rendered = ", ".join(
             f"{label} {edge_counts[label]}"
@@ -1024,7 +1101,7 @@ def _render_loss_review(rows: list[ResolvedPrediction], max_rows: int = 12) -> l
             f"  {row.pitcher_name} ({row.team} vs {row.opponent}) "
             f"{row.side} {row.line:g} | proj ks {proj_ks} | proj outs {proj_outs} | proj bf {proj_bf} | actual {row.actual:g} | outs {row.actual_outs} | pitches {row.actual_pitches} | "
             f"bf {row.actual_batters_faced} | bb {row.actual_walks} | h {row.actual_hits_allowed} | er {row.actual_earned_runs} | "
-            f"score {row.score} | signal {signal} | result edge {row.edge:+.2f} | miss {row.miss_type or '-'} | flags {flags}"
+            f"signal balance {row.score} | edge signal {signal} | result edge {row.edge:+.2f} | miss {row.miss_type or '-'} | flags {flags}"
         )
     if len(ordered_losses) > max_rows:
         lines.append(f"  ... {len(ordered_losses) - max_rows} more losses omitted")
@@ -1079,7 +1156,7 @@ def main() -> int:
         print(f"- Displayed core plays in snapshot: {loaded.selected_displayed_count}")
         print(f"- Lean plays in snapshot: {loaded.selected_lean_count}")
         print(f"- Watchlist plays in snapshot: {loaded.selected_watch_count}")
-        print(f"- Qualified candidates before score filtering: {loaded.selected_candidate_count}")
+        print(f"- Qualified candidates before signal/tier display filtering: {loaded.selected_candidate_count}")
         if not include_leans_enabled() and loaded.selected_lean_count > 0:
             print("- Tip: run python3 backtest.py --include-leans to grade the broader displayed board.")
         elif not include_watch_enabled() and loaded.selected_watch_count > 0:
@@ -1117,7 +1194,9 @@ def main() -> int:
     lines.append(f"- History directory: {selected_history_dir}")
     lines.append(
         f"- Current report code: model {PITCHER_MODEL_VERSION}; "
-        f"history schema {PITCHER_HISTORY_SCHEMA_VERSION}"
+        f"history schema {PITCHER_HISTORY_SCHEMA_VERSION}; "
+        f"display policy {PITCHER_DISPLAY_POLICY_VERSION}; "
+        f"confidence {PITCHER_CONFIDENCE_MODEL_VERSION}"
     )
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
     lines.append(f"- Finished predictions graded: {len(resolved)}")
@@ -1149,6 +1228,10 @@ def main() -> int:
         shadow_lines = _render_shadow_opportunity_diagnostics(resolved)
         if shadow_lines:
             lines.extend(shadow_lines)
+            lines.append("")
+        confidence_lines = _render_confidence_calibration(resolved)
+        if confidence_lines:
+            lines.extend(confidence_lines)
             lines.append("")
         lines.extend(_render_postgame_diagnostics(resolved))
         lines.append("")

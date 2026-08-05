@@ -10,7 +10,15 @@ from pathlib import Path
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
 from mlb_props.notifiers.discord import send_discord_embeds
-from mlb_props.output import render_candidates, render_pitcher_props_discord_embeds, render_starter_board
+from mlb_props.output import (
+    render_candidates,
+    render_pitcher_props_discord_embeds,
+    render_starter_board,
+)
+from mlb_props.pitcher_presentation import (
+    build_pitcher_presentations,
+    display_rankings_payload,
+)
 from mlb_props.screener import build_daily_starter_board, screen_pitcher_props
 from mlb_props.sources.mlb_stats_api import MlbStatsApiPitcherLogsSource, MlbStatsApiSlateSource
 from mlb_props.sources.odds_api import MlbOddsApiSource
@@ -19,6 +27,8 @@ from mlb_props.sources.scrape import MlbScrapeSource
 from mlb_props.sources.sample import SamplePitcherLogsSource, SamplePitcherPropsSource, SampleSlateSource
 from mlb_props.tiers import candidate_tier
 from mlb_props.version import (
+    PITCHER_DISPLAY_POLICY_VERSION,
+    PITCHER_CONFIDENCE_MODEL_VERSION,
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
     PITCHER_OPPORTUNITY_SHADOW_VERSION,
@@ -327,7 +337,7 @@ def main() -> int:
         print("Primary live thresholds produced no qualifiers, so the board was rerun with a softer live fallback profile.")
     print(
         f"Evaluated {result.evaluated_prop_lines} prop lines; "
-        f"{len(result.candidates)} candidates qualified before score filtering."
+        f"{len(result.candidates)} candidates qualified before signal/tier display filtering."
     )
 
     if discord_notifications_enabled():
@@ -350,6 +360,12 @@ def main() -> int:
             print(f"Discord notification: failed ({discord_result.error or discord_result.status_code})")
 
     if settings.export_history:
+        display_presentations = build_pitcher_presentations(
+            result.candidates,
+            min_score=active_screen_settings.min_display_score,
+            lean_min_score=lean_min_score(active_screen_settings),
+            watch_min_score=watch_min_score(active_screen_settings),
+        )
         export_path = export_run_history(
             "pitcher_props",
             {
@@ -357,7 +373,9 @@ def main() -> int:
                 "history_schema_version": PITCHER_HISTORY_SCHEMA_VERSION,
                 "model_version": PITCHER_MODEL_VERSION,
                 "shadow_feature_version": PITCHER_OPPORTUNITY_SHADOW_VERSION,
+                "confidence_model_version": PITCHER_CONFIDENCE_MODEL_VERSION,
                 "tier_policy_version": PITCHER_TIER_POLICY_VERSION,
+                "display_policy_version": PITCHER_DISPLAY_POLICY_VERSION,
                 "screen_date": settings.screen_date.isoformat(),
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "settings": asdict(settings),
@@ -404,6 +422,7 @@ def main() -> int:
                     )
                     == "watch"
                 ],
+                "display_rankings": display_rankings_payload(display_presentations),
                 "model_opinions": [
                     asdict(item)
                     for item in starter_board
