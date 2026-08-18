@@ -720,6 +720,14 @@ Before switching branches, preserve or commit unrelated edits. Never discard `.g
 
 ## Handoff Notes
 
+Focused continuation documents:
+
+- pitcher props: `docs/PITCHER_PROPS_HANDOFF.md`
+- copy-ready pitcher continuation prompt: `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md`
+- Hot Hits: `docs/HOT_HITS_HANDOFF.md`
+
+The focused pitcher handoff is the canonical source for the August 17 operational state, schema-6 collection status, recent modeling lessons, and next analysis task. Keep this README as the broad shared-project reference.
+
 ### Pickup checklist
 
 - Read `Pitcher Props Objective And Design`, `Current scoring inputs`, `Current assumptions`, and this handoff section before changing pitcher logic.
@@ -792,3 +800,11 @@ python3 backtest.py --all-history --include-watch \
 - `mlb_props/recency_shadow.py` now records the alternative `50% season / 30% L10 / 20% L5` aggregate K/BF projection plus a season/L5 BF-per-out blend. It is leakage-safe and research-only.
 - Schema-6 backtests add L5 outcome-band auditing and current-versus-recency-shadow K MAE, BF MAE, bias, and Brier comparisons. Do not promote the formula from a short or abnormal-slate sample.
 - No scheduled-task definition change is needed for schema 6. Once deployed, the existing scheduled run will collect the new nested fields automatically.
+
+### Status checkpoint: 2026-08-17
+
+- `8b23aab` is deployed on Mac/remote main and Windows main. The active production model and tier policy remain unchanged; schema 6 adds research history only.
+- Windows collected 12 schema-6 snapshots from August 5 through August 17 containing 195 qualified candidates and 195 populated recency shadows. August 16 is missing because a machine-wide outbound HTTPS/TLS incident stopped Tennis, WNBA, Hot Hits, pitcher props, and Discord during the morning; service recovered later that day.
+- Both MLB scheduled tasks succeeded again on August 17. Pitcher props found 17 FanDuel K lines, exported history, and sent Discord. No scheduler change or retry framework was made; reconsider bounded retries only if the incident recurs.
+- The schema-6 sample has not been graded. The newest Windows backtest still ends August 2. The next task is a read-only Core/Lean/Watch backtest comparing active versus recency-shadow K/BF error, confidence calibration/Brier, and L5 outcome bands before any production tuning.
+- Use `docs/PITCHER_PROPS_HANDOFF.md` as the canonical pitcher handoff and `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md` to start a fresh agent conversation.
