@@ -8,7 +8,7 @@ from urllib.parse import quote
 from ..cache import JsonCache
 from ..config import ODDS_API_TEAM_ABBR, TEAM_ABBR_TO_MLB_ID
 from ..models import BatterGameLog, BatterPitcherHistory, Game, PitcherGameLog, PropLine
-from ..utils import fetch_json, normalize_name, normalize_team_abbr, parse_iso_datetime, safe_int
+from ..utils import fetch_json, fetch_json_cached, normalize_name, normalize_team_abbr, parse_iso_datetime, safe_int
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,7 @@ class MlbStatsApiSource:
         cached = self.cache.get(cache_key)
         if cached is not None:
             return cached
-        data = fetch_json(url)
-        self.cache.set(cache_key, data)
+        data = fetch_json_cached(self.cache, cache_key, url)
         return data
 
 

@@ -5,6 +5,9 @@ param(
     [switch]$CoreOnly
 )
 
+# Keep Python's stderr from being turned into a terminating NativeCommandError,
+# which previously truncated full tracebacks to a single line.
+$PSNativeCommandUseErrorActionPreference = $false
 $ErrorActionPreference = "Stop"
 
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectDir "logs") | Out-Null
@@ -37,8 +40,15 @@ function Invoke-LoggedCommand {
     $TempOutput = Join-Path ([System.IO.Path]::GetTempPath()) ("mlb_pitcher_backtest_{0}_{1}.log" -f $SafeName, [guid]::NewGuid().ToString("N"))
     try {
         Write-TaskLog "Running command: $FilePath $($Arguments -join ' ')"
-        & $FilePath @Arguments > $TempOutput 2>&1
-        $CommandExitCode = $LASTEXITCODE
+        $PreviousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $FilePath @Arguments > $TempOutput 2>&1
+            $CommandExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $PreviousErrorActionPreference
+        }
         if (Test-Path $TempOutput) {
             Get-Content -Path $TempOutput | ForEach-Object {
                 Write-TaskLog $_

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 # Increment the schema version when the shape of exported pitcher history changes.
-PITCHER_HISTORY_SCHEMA_VERSION = 6
+PITCHER_HISTORY_SCHEMA_VERSION = 7
 
 # Increment the model version only when projection inputs, formulas, or scoring
 # behavior change. This version names the situational model that existed before
@@ -28,3 +28,11 @@ PITCHER_CONFIDENCE_MODEL_VERSION = "pitcher-confidence-provisional-v1"
 # The display policy is versioned separately because slate rank and user-facing
 # labels can change without changing the underlying recommendation model.
 PITCHER_DISPLAY_POLICY_VERSION = "provisional-confidence-rank-v1"
+
+# The forecast board is a research-only capture of every evaluated prop line,
+# including non-qualifying ones. It never affects production output.
+PITCHER_FORECAST_BOARD_VERSION = "forecast-board-v1"
+
+# The price shadow captures both-side sportsbook prices when a source exposes
+# them. It is observation-only and never used for EV or staking claims.
+PITCHER_PRICE_SHADOW_VERSION = "price-shadow-v1"

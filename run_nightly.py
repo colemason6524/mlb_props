@@ -19,6 +19,7 @@ from mlb_props.pitcher_presentation import (
     build_pitcher_presentations,
     display_rankings_payload,
 )
+from mlb_props.run_ledger import record_run
 from mlb_props.screener import build_daily_starter_board, screen_pitcher_props
 from mlb_props.sources.mlb_stats_api import MlbStatsApiPitcherLogsSource, MlbStatsApiSlateSource
 from mlb_props.sources.odds_api import MlbOddsApiSource
@@ -29,9 +30,11 @@ from mlb_props.tiers import candidate_tier
 from mlb_props.version import (
     PITCHER_DISPLAY_POLICY_VERSION,
     PITCHER_CONFIDENCE_MODEL_VERSION,
+    PITCHER_FORECAST_BOARD_VERSION,
     PITCHER_HISTORY_SCHEMA_VERSION,
     PITCHER_MODEL_VERSION,
     PITCHER_OPPORTUNITY_SHADOW_VERSION,
+    PITCHER_PRICE_SHADOW_VERSION,
     PITCHER_RECENCY_SHADOW_VERSION,
     PITCHER_TIER_POLICY_VERSION,
 )
@@ -139,6 +142,32 @@ def export_run_history(filename_prefix: str, payload: dict) -> Path:
     return path
 
 
+def sanitized_settings_payload(settings) -> dict:
+    payload = asdict(settings)
+    payload.pop("odds_api_key", None)
+    return payload
+
+
+def slate_games_payload(games) -> list[dict]:
+    rows = []
+    for game in games:
+        rows.append(
+            {
+                "game_id": game.game_id,
+                "game_time_utc": (
+                    game.game_time.isoformat() if game.game_time is not None else None
+                ),
+                "home_team": game.home_team,
+                "away_team": game.away_team,
+                "probable_home_pitcher": game.probable_home_pitcher,
+                "probable_away_pitcher": game.probable_away_pitcher,
+                "probable_home_pitcher_id": game.probable_home_pitcher_id,
+                "probable_away_pitcher_id": game.probable_away_pitcher_id,
+            }
+        )
+    return rows
+
+
 def lean_min_score(active_screen_settings) -> int:
     return max(4, active_screen_settings.min_display_score - 3)
 
@@ -186,7 +215,24 @@ def relaxed_live_settings(settings):
     )
 
 
+    return 0
+
+
 def main() -> int:
+    try:
+        exit_code = _run()
+        record_run(outcome="success" if exit_code == 0 else "failed", task="pitcher_props")
+        return exit_code
+    except Exception as exc:
+        record_run(
+            outcome="failed",
+            task="pitcher_props",
+            message=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+
+
+def _run() -> int:
     settings = load_settings()
     warm_cache_only = warm_cache_mode_enabled()
     cache_report_only = cache_report_mode_enabled()
@@ -341,6 +387,16 @@ def main() -> int:
         f"{len(result.candidates)} candidates qualified before signal/tier display filtering."
     )
 
+    discord_delivery = {
+        "enabled": discord_notifications_enabled(),
+        "attempted": False,
+        "sent_at": None,
+        "ok": None,
+        "status_code": None,
+        "error": None,
+        "embed_count": 0,
+        "payload": None,
+    }
     if discord_notifications_enabled():
         embeds = render_pitcher_props_discord_embeds(
             candidates=result.candidates,
@@ -355,6 +411,20 @@ def main() -> int:
             watch_limit=pitcher_props_discord_watch_limit(),
         )
         discord_result = send_discord_embeds(discord_webhook_url(), embeds)
+        discord_delivery.update(
+            {
+                "attempted": True,
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+                "ok": discord_result.ok,
+                "status_code": discord_result.status_code,
+                "error": discord_result.error,
+                "embed_count": len(embeds),
+                "payload": {
+                    "embed_titles": [embed.get("title") for embed in embeds],
+                    "field_titles": [field.get("name") for embed in embeds for field in embed.get("fields", [])],
+                },
+            }
+        )
         if discord_result.ok:
             print("Discord notification: sent")
         else:
@@ -378,10 +448,12 @@ def main() -> int:
                 "confidence_model_version": PITCHER_CONFIDENCE_MODEL_VERSION,
                 "tier_policy_version": PITCHER_TIER_POLICY_VERSION,
                 "display_policy_version": PITCHER_DISPLAY_POLICY_VERSION,
+                "forecast_board_version": PITCHER_FORECAST_BOARD_VERSION,
+                "price_shadow_version": PITCHER_PRICE_SHADOW_VERSION,
                 "screen_date": settings.screen_date.isoformat(),
                 "exported_at": datetime.now(timezone.utc).isoformat(),
-                "settings": asdict(settings),
-                "screen_settings": asdict(active_screen_settings),
+                "settings": sanitized_settings_payload(settings),
+                "screen_settings": sanitized_settings_payload(active_screen_settings),
                 "run_note": settings.run_note,
                 "line_coverage_status": coverage_status,
                 "line_coverage": {
@@ -390,7 +462,10 @@ def main() -> int:
                     "floor": live_coverage_floor(len(games)),
                     "diagnostics": diagnostics,
                 },
+                "slate_games": slate_games_payload(games),
+                "discord_delivery": discord_delivery,
                 "candidates": [asdict(item) for item in result.candidates],
+                "forecast_rows": [asdict(item) for item in result.forecast_rows],
                 "displayed_candidates": [
                     asdict(item)
                     for item in result.candidates

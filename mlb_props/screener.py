@@ -9,9 +9,11 @@ from types import SimpleNamespace
 from .config import PITCHER_OUTS_RECORDED, PITCHER_STRIKEOUTS, Settings
 from .models import (
     Candidate,
+    ForecastRow,
     MatchupContext,
     OpportunityShadow,
     PitcherGameLog,
+    PriceShadow,
     PropLine,
     RecencyProjectionShadow,
     ScreeningResult,
@@ -19,6 +21,7 @@ from .models import (
 )
 from .opportunity import build_opportunity_shadow
 from .pitcher_confidence import estimate_pitcher_confidence
+from .price_shadow import no_vig_probabilities, raw_implied_probabilities
 from .recency_shadow import build_recency_projection_shadow
 from .tiers import core_block_reasons
 from .utils import normalize_name
@@ -55,6 +58,7 @@ def screen_pitcher_props(
     matchup_contexts: dict[tuple[str, str], MatchupContext],
 ) -> ScreeningResult:
     candidates: list[Candidate] = []
+    forecast_rows: list[ForecastRow] = []
     evaluated_prop_lines = 0
     non_qualifying_prop_lines = 0
 
@@ -70,6 +74,14 @@ def screen_pitcher_props(
         evaluated_prop_lines += 1
         if len(logs) < settings.thresholds.min_starts:
             non_qualifying_prop_lines += 1
+            forecast_rows.append(
+                _forecast_row(
+                    line=line,
+                    opportunity_shadow=opportunity_shadow,
+                    reason="insufficient_starts",
+                    min_starts=settings.thresholds.min_starts,
+                )
+            )
             continue
 
         last_5 = logs[: settings.thresholds.recent_window]
@@ -158,6 +170,16 @@ def screen_pitcher_props(
             opportunity_shadow=opportunity_shadow,
             recency_shadow=recency_shadow,
         )
+        forecast_rows.append(
+            _forecast_row(
+                line=line,
+                opportunity_shadow=opportunity_shadow,
+                recency_shadow=recency_shadow,
+                reason=None,
+                min_starts=settings.thresholds.min_starts,
+                line_candidates=line_candidates,
+            )
+        )
         if line_candidates:
             candidates.extend(line_candidates)
         else:
@@ -171,6 +193,136 @@ def screen_pitcher_props(
         ),
         evaluated_prop_lines=evaluated_prop_lines,
         non_qualifying_prop_lines=non_qualifying_prop_lines,
+        forecast_rows=forecast_rows,
+    )
+
+
+def _build_price_shadow(line: PropLine, candidate: Candidate) -> PriceShadow | None:
+    if line.over_price is None and line.under_price is None:
+        return None
+    over_raw, under_raw = raw_implied_probabilities(line.over_price, line.under_price)
+    over_no_vig, under_no_vig = no_vig_probabilities(line.over_price, line.under_price)
+    estimate = candidate.confidence_estimate
+    side_win_probability = estimate.win_probability if estimate is not None else None
+    flags: list[str] = []
+    if over_no_vig is not None and under_no_vig is not None and side_win_probability is not None:
+        over_prob = over_no_vig
+        under_prob = under_no_vig
+        if candidate.side == "OVER":
+            if over_prob <= side_win_probability:
+                flags.append("PRICE_SUPPORTS_SIDE")
+            else:
+                flags.append("PRICE_AGAINST_SIDE")
+        else:
+            if under_prob <= (1.0 - side_win_probability):
+                flags.append("PRICE_SUPPORTS_SIDE")
+            else:
+                flags.append("PRICE_AGAINST_SIDE")
+    return PriceShadow(
+        version="price-shadow-v1",
+        screen_date=line.game_date.isoformat(),
+        bookmaker=line.bookmaker,
+        prop_type=line.prop_type,
+        line=line.line,
+        over_price=line.over_price,
+        under_price=line.under_price,
+        price_collected_at=line.price_collected_at,
+        source=line.source,
+        over_implied_probability=over_raw,
+        under_implied_probability=under_raw,
+        over_no_vig_probability=over_no_vig,
+        under_no_vig_probability=under_no_vig,
+        flags=flags,
+    )
+
+
+def _forecast_row(
+    line: PropLine,
+    opportunity_shadow: OpportunityShadow,
+    reason: str | None,
+    min_starts: int,
+    recency_shadow: RecencyProjectionShadow | None = None,
+    line_candidates: list[Candidate] | None = None,
+) -> ForecastRow:
+    if line_candidates:
+        over = next((c for c in line_candidates if c.side == "OVER"), None)
+        under = next((c for c in line_candidates if c.side == "UNDER"), None)
+        projected = over or under
+        return ForecastRow(
+            event_id=line.event_id,
+            line_source=line.source,
+            line_collected_at=line.collected_at.isoformat() if line.collected_at is not None else None,
+            subject_id=line.subject_id,
+            subject_name=line.subject_name_raw,
+            subject_role=line.subject_role,
+            team=line.team,
+            opponent=line.opponent,
+            hand=line.hand,
+            prop_type=line.prop_type,
+            bookmaker=line.bookmaker,
+            line=line.line,
+            projected_outs=projected.projected_outs if projected else None,
+            projected_batters_faced=projected.projected_batters_faced if projected else None,
+            projected_k_rate=projected.projected_k_rate if projected else None,
+            projected_strikeouts=projected.projected_strikeouts if projected else None,
+            over_projection_edge=(
+                round(over.projected_strikeouts - line.line, 2) if over else None
+            ),
+            under_projection_edge=(
+                round(line.line - under.projected_strikeouts, 2) if under else None
+            ),
+            qualified_over=over is not None,
+            qualified_under=under is not None,
+            qualification_reason="qualified",
+            over_score=over.score if over else None,
+            under_score=under.score if under else None,
+            opportunity_confidence=opportunity_shadow.opportunity_confidence or None,
+            shadow_projected_outs=opportunity_shadow.shadow_projected_outs,
+            shadow_projected_batters_faced=opportunity_shadow.shadow_projected_batters_faced,
+            shadow_pitch_budget=opportunity_shadow.shadow_pitch_budget,
+            recency_shadow_projected_strikeouts=(
+                recency_shadow.shadow_projected_strikeouts if recency_shadow else None
+            ),
+            recency_shadow_projected_k_rate=(
+                recency_shadow.shadow_projected_k_rate if recency_shadow else None
+            ),
+            flags=projected.flags if projected else [],
+        )
+    return ForecastRow(
+        event_id=line.event_id,
+        line_source=line.source,
+        line_collected_at=line.collected_at.isoformat() if line.collected_at is not None else None,
+        subject_id=line.subject_id,
+        subject_name=line.subject_name_raw,
+        subject_role=line.subject_role,
+        team=line.team,
+        opponent=line.opponent,
+        hand=line.hand,
+        prop_type=line.prop_type,
+        bookmaker=line.bookmaker,
+        line=line.line,
+        projected_outs=None,
+        projected_batters_faced=None,
+        projected_k_rate=None,
+        projected_strikeouts=None,
+        over_projection_edge=None,
+        under_projection_edge=None,
+        qualified_over=False,
+        qualified_under=False,
+        qualification_reason=reason or "not_qualified",
+        over_score=None,
+        under_score=None,
+        opportunity_confidence=opportunity_shadow.opportunity_confidence or None,
+        shadow_projected_outs=opportunity_shadow.shadow_projected_outs,
+        shadow_projected_batters_faced=opportunity_shadow.shadow_projected_batters_faced,
+        shadow_pitch_budget=opportunity_shadow.shadow_pitch_budget,
+        recency_shadow_projected_strikeouts=(
+            recency_shadow.shadow_projected_strikeouts if recency_shadow else None
+        ),
+        recency_shadow_projected_k_rate=(
+            recency_shadow.shadow_projected_k_rate if recency_shadow else None
+        ),
+        flags=[],
     )
 
 
@@ -317,8 +469,14 @@ def _build_candidates(
             park_run_factor=getattr(matchup_context, "park_run_factor", None),
             moneyline=getattr(matchup_context, "moneyline", None),
             opportunity_shadow=opportunity_shadow,
+            event_id=line.event_id,
+            line_source=line.source,
+            line_collected_at=(
+                line.collected_at.isoformat() if line.collected_at is not None else None
+            ),
         )
         candidate.confidence_estimate = estimate_pitcher_confidence(candidate)
+        candidate.price_shadow = _build_price_shadow(line, candidate)
         shadow_candidate = replace(
             candidate,
             projected_outs=recency_shadow.shadow_projected_outs,

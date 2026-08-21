@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 from ..cache import JsonCache
 from ..config import MARKET_TO_PROP, ODDS_API_MARKETS, ODDS_API_TEAM_ABBR, PARK_RUN_FACTORS, Settings
 from ..models import Game, MatchupContext, PropLine
-from ..utils import fetch_json, normalize_name, normalize_team_abbr, parse_iso_datetime, safe_float
+from ..utils import fetch_json, fetch_json_cached, normalize_name, normalize_team_abbr, parse_iso_datetime, safe_float
 from .mlb_stats_api import build_probable_pitcher_index
 
 
@@ -25,8 +25,7 @@ class MlbOddsApiSource:
         cached = cache.get(cache_key)
         if cached is not None:
             return cached
-        data = fetch_json(url)
-        cache.set(cache_key, data)
+        data = fetch_json_cached(cache, cache_key, url)
         return data
 
     def fetch_event_ids(self, screen_date: date) -> list[dict]:
@@ -116,6 +115,8 @@ class MlbOddsApiSource:
                     probable = probable_pitchers.get(normalize_name(pitcher_name))
                     if probable is None:
                         continue
+                    over_price = _safe_price(outcome.get("price"))
+                    under_price = _opposite_price(market.get("outcomes", []), "Under")
                     results.append(
                         PropLine(
                             event_id=str(payload.get("id", game.game_id)),
@@ -132,6 +133,9 @@ class MlbOddsApiSource:
                             bookmaker=bookmaker_key,
                             source="the_odds_api",
                             collected_at=datetime.now(timezone.utc),
+                            over_price=over_price,
+                            under_price=under_price,
+                            price_collected_at=datetime.now(timezone.utc).isoformat(),
                         )
                     )
         return results
@@ -180,3 +184,18 @@ class MlbOddsApiSource:
                 if moneylines:
                     return moneylines
         return moneylines
+
+
+def _safe_price(value) -> int | None:
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric != 0 else None
+
+
+def _opposite_price(outcomes: list[dict], name: str) -> int | None:
+    for outcome in outcomes:
+        if outcome.get("name") == name:
+            return _safe_price(outcome.get("price"))
+    return None

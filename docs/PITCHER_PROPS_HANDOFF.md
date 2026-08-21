@@ -16,7 +16,7 @@ The long-term goal is a Discord board that another group could depend on. That r
 
 Production commit: `8b23aab Collect pitcher recency projection shadow`
 
-Deployed versions:
+Deployed versions (production, as of 2026-08-17):
 
 - history schema: `6`
 - active projection model: `pitcher-k-situational-v1`
@@ -27,6 +27,14 @@ Deployed versions:
 - display policy: `provisional-confidence-rank-v1`
 
 The active projection model and tier policy have not been changed by either shadow or by the confidence presentation work.
+
+### Local branch schema-7 research candidate (not yet deployed to Windows)
+
+The `codex/pitcher-recency-shadow` local branch contains a schema-7 research candidate that is NOT yet on the Windows production checkout. Review and deploy it separately, then update this table.
+
+- history schema: `7` (audit identity, delivery ledger, sanitized settings)
+- forecast board: `forecast-board-v1` (research-only)
+- price shadow: `price-shadow-v1` (research-only)
 
 Windows production checkout:
 
@@ -214,6 +222,19 @@ Each export preserves:
 - active and shadow confidence estimates
 - display rankings and exact recommendation/display roles
 - line-independent starter board/model opinions
+
+### Schema-7 additions (local branch research candidate)
+
+When schema 7 is deployed, each export additionally preserves:
+
+- sanitized settings with `odds_api_key` removed
+- a `slate_games` array (game id, game time UTC, teams, probable pitchers and IDs) for strict pregame checks
+- a `discord_delivery` ledger (enabled/attempted/sent time/ok/status/error/embed titles/field titles)
+- per-candidate audit identity: `event_id`, `line_source`, and `line_collected_at` (tied to the PropLine)
+- a `forecast_rows` board capturing every evaluated line, including non-qualifying ones and their qualification reason
+- per-candidate `price_shadow` when the line source exposes both-side prices (`over_price`, `under_price`, implied and no-vig probabilities)
+
+The local grader (`mlb_props/pitcher_grading.py`) consumes schema-7 identity for strict grading: it only grades rows whose snapshot was strictly pregame and (optionally) delivered, resolves doubleheaders exactly via `event_id`, and reports price-shadow support.
 
 As of 2026-08-17, Windows had:
 

@@ -27,6 +27,14 @@ class JsonCache:
             return None
         return payload["data"]
 
+    def get_allow_stale(self, key: str) -> Any | None:
+        """Return cached data even if stale, or None when missing entirely."""
+        path = self._path(key)
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text())
+        return payload.get("data")
+
     def set(self, key: str, data: Any) -> None:
         path = self._path(key)
         payload = {

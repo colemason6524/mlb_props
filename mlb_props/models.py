@@ -34,6 +34,9 @@ class PropLine:
     source: str
     collected_at: datetime
     subject_id: int | None = None
+    over_price: int | None = None
+    under_price: int | None = None
+    price_collected_at: str | None = None
 
 
 @dataclass
@@ -225,6 +228,24 @@ class RecencyProjectionShadow:
 
 
 @dataclass
+class PriceShadow:
+    version: str
+    screen_date: str
+    bookmaker: str
+    prop_type: str
+    line: float
+    over_price: int | None
+    under_price: int | None
+    price_collected_at: str | None
+    source: str
+    over_implied_probability: float | None = None
+    under_implied_probability: float | None = None
+    over_no_vig_probability: float | None = None
+    under_no_vig_probability: float | None = None
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Candidate:
     subject_name: str
     subject_id: int | None
@@ -271,6 +292,10 @@ class Candidate:
     opportunity_shadow: OpportunityShadow | None = None
     confidence_estimate: PitcherConfidenceEstimate | None = None
     recency_shadow: RecencyProjectionShadow | None = None
+    price_shadow: PriceShadow | None = None
+    event_id: str | None = None
+    line_source: str | None = None
+    line_collected_at: str | None = None
 
 
 @dataclass
@@ -365,3 +390,38 @@ class ScreeningResult:
     candidates: list[Candidate]
     evaluated_prop_lines: int
     non_qualifying_prop_lines: int
+    forecast_rows: list[ForecastRow] = field(default_factory=list)
+
+
+@dataclass
+class ForecastRow:
+    event_id: str | None
+    line_source: str | None
+    line_collected_at: str | None
+    subject_id: int | None
+    subject_name: str
+    subject_role: str
+    team: str
+    opponent: str
+    hand: str
+    prop_type: str
+    bookmaker: str
+    line: float
+    projected_outs: float | None
+    projected_batters_faced: float | None
+    projected_k_rate: float | None
+    projected_strikeouts: float | None
+    over_projection_edge: float | None
+    under_projection_edge: float | None
+    qualified_over: bool
+    qualified_under: bool
+    qualification_reason: str
+    over_score: int | None
+    under_score: int | None
+    opportunity_confidence: str | None
+    shadow_projected_outs: float | None
+    shadow_projected_batters_faced: float | None
+    shadow_pitch_budget: float | None
+    recency_shadow_projected_strikeouts: float | None
+    recency_shadow_projected_k_rate: float | None
+    flags: list[str] = field(default_factory=list)

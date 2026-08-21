@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,7 +64,15 @@ def ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def fetch_text(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> str:
+def _is_retryable_error(exc: Exception) -> bool:
+    if isinstance(exc, HTTPError):
+        return 500 <= exc.code < 600 or exc.code == 429
+    if isinstance(exc, URLError):
+        return True
+    return False
+
+
+def _fetch_text_once(url: str, headers: dict[str, str] | None, timeout: int) -> str:
     request_headers = DEFAULT_HEADERS.copy()
     if headers:
         request_headers.update(headers)
@@ -77,8 +86,66 @@ def fetch_text(url: str, headers: dict[str, str] | None = None, timeout: int = 3
         raise RuntimeError(f"Network error for {url}: {exc}") from exc
 
 
-def fetch_json(url: str, headers: dict[str, str] | None = None, timeout: int = 30) -> Any:
-    return json.loads(fetch_text(url, headers=headers, timeout=timeout))
+def fetch_text(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+    attempts: int = 3,
+    backoff_seconds: float = 1.5,
+) -> str:
+    """Fetch a URL with bounded retries.
+
+    Retries only on transient failures (network errors, HTTP 5xx, and 429).
+    All other HTTP errors and non-transient failures raise immediately.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _fetch_text_once(url, headers, timeout)
+        except RuntimeError as exc:
+            cause = exc.__cause__ or exc
+            last_error = exc
+            if not _is_retryable_error(cause):
+                raise
+            if attempt < attempts:
+                time.sleep(backoff_seconds * (2 ** (attempt - 1)))
+    assert last_error is not None
+    raise last_error
+
+
+def fetch_json(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+    attempts: int = 3,
+    backoff_seconds: float = 1.5,
+) -> Any:
+    return json.loads(fetch_text(url, headers=headers, timeout=timeout, attempts=attempts, backoff_seconds=backoff_seconds))
+
+
+def fetch_json_cached(
+    cache,
+    cache_key: str,
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+    attempts: int = 3,
+    backoff_seconds: float = 1.5,
+) -> Any:
+    """Fetch JSON with retries, returning fresh cache when available and falling
+    back to stale cache only if a fresh fetch persistently fails."""
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        data = fetch_json(url, headers=headers, timeout=timeout, attempts=attempts, backoff_seconds=backoff_seconds)
+    except Exception:
+        stale = cache.get_allow_stale(cache_key)
+        if stale is not None:
+            return stale
+        raise
+    cache.set(cache_key, data)
+    return data
 
 
 def normalize_name(name: str) -> str:
