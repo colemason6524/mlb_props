@@ -47,6 +47,28 @@ try {
     & $PythonExe run_hot_hits.py *>> $LogPath
     $ExitCode = $LASTEXITCODE
     Write-TaskLog "Finished hot hits with exit code $ExitCode"
+
+    if ($ExitCode -eq 0 -and $env:EXPORT_HISTORY -eq "true") {
+        $HistoryDir = Join-Path $ProjectDir "outputs\history"
+        $HistoryFiles = @(Get-ChildItem -LiteralPath $HistoryDir -Filter "hot_hits_*.json" -File -ErrorAction SilentlyContinue)
+        if ($HistoryFiles.Count -gt 0) {
+            foreach ($BackupDir in @(
+                (Join-Path (Join-Path $ProjectDir "..") "mlb_props_history_backup\hot_hits"),
+                (Join-Path "C:\Users\muski\iCloudDrive\mlb_props_logs" "hot_hits")
+            )) {
+                try {
+                    New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
+                    Copy-Item -LiteralPath $HistoryFiles.FullName -Destination $BackupDir -Force
+                    Write-TaskLog "History backup: $($HistoryFiles.Count) files copied to $BackupDir"
+                } catch {
+                    Write-TaskLog "History backup skipped for $BackupDir : $($_.Exception.Message)"
+                }
+            }
+        } else {
+            Write-TaskLog "History backup skipped: no hot_hits_*.json found in $HistoryDir"
+        }
+    }
+
     exit $ExitCode
 }
 catch {
