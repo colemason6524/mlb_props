@@ -7,3 +7,5 @@ __pycache__/
 outputs/
 .analysis/
 *.zip
+hot_hits_from_windows/
+pitcher_props_from_windows/

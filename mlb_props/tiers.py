@@ -3,6 +3,8 @@ from __future__ import annotations
 from .config import PITCHER_OUTS_RECORDED
 
 
+# Keep these thresholds centralized so console output, Discord output, history
+# export, and backtests all use the same Core/Lean/Watch interpretation.
 CORE_EDGE_MIN = 1.0
 UNDER_CORE_EDGE_MIN = 1.25
 VOLATILE_EDGE_MIN = 1.25
