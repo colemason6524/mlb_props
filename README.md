@@ -18,6 +18,10 @@ The repo also includes a live-data hitter screen for one-hit parlay research:
 
 - `BATTER_HITS` hot hitter board via `run_hot_hits.py`
 
+And a game-level market shadow collector (observation-only, no model opinions):
+
+- moneyline / run line / game total snapshots via `run_game_markets.py`
+
 ## Repo shape
 
 - `run_nightly.py`: pitcher props CLI entry point
@@ -35,6 +39,41 @@ The repo also includes a live-data hitter screen for one-hit parlay research:
 - `backtest.py`: reconciles saved pitcher strikeout snapshots against actual MLB results
 - `scripts/run_pitcher_props_task.*`: Windows Task Scheduler wrappers for the daily pitcher board
 - `scripts/run_pitcher_props_backtest_task.*`: optional Windows Task Scheduler wrappers for daily pitcher backtests
+- `run_game_markets.py`: game-market shadow collector CLI (Bovada primary, ESPN cross-check)
+- `mlb_props/game_markets.py`: two-way price models and no-vig market-baseline math
+- `scripts/run_game_markets_task.*`: Windows Task Scheduler wrappers for the morning + evening shadow runs
+
+## Game-level market shadow (added 2026-08-25)
+
+Observation-only collection of moneyline, run line, and game total lines.
+No model opinions, no Discord, no staking claims. The goal is to accumulate
+a versioned price history now so that the future `game-ml` / `game-total`
+shadow models can be graded against a real market baseline from day one.
+
+- Sources: Bovada free coupon JSON API (`sources/bovada_mlb.py`, primary,
+  both-side American prices) with ESPN odds page cross-check
+  (`sources/espn_odds.py`, totals + run lines; curl User-Agent fallback for
+  its AWS WAF challenge). No Odds API usage or fees.
+- Market baseline: no-vig probabilities per game via
+  `game_markets.market_baseline_payload` (home/away win, over/under).
+- History: `outputs/history/game_markets_*.json`, schema
+  `GAME_MARKETS_HISTORY_SCHEMA_VERSION = 1`, shadow version
+  `game-price-shadow-v1`. Coverage diagnostics per source are embedded in
+  every export.
+- Run locally: `DATA_MODE=live python3 run_game_markets.py`
+  (add `EXPORT_HISTORY=true` to export).
+
+Windows Task Scheduler registration (morning pregame + evening
+lineup-confirmation refresh):
+
+```bat
+schtasks /Create /TN "MLB_game_markets" /TR "C:\Users\muski\mlb_props\scripts\run_game_markets_task.cmd" /SC DAILY /ST 11:40 /F
+schtasks /Create /TN "MLB_game_markets_evening" /TR "C:\Users\muski\mlb_props\scripts\run_game_markets_evening_task.cmd" /SC DAILY /ST 16:35 /F
+```
+
+The evening run re-snapshots lines after lineups post; starter changes
+between snapshots will be detectable later by comparing probable pitchers
+in successive history exports.
 
 ## Architecture notes
 

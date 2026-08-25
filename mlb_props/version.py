@@ -36,3 +36,9 @@ PITCHER_FORECAST_BOARD_VERSION = "forecast-board-v1"
 # The price shadow captures both-side sportsbook prices when a source exposes
 # them. It is observation-only and never used for EV or staking claims.
 PITCHER_PRICE_SHADOW_VERSION = "price-shadow-v1"
+
+# Game-level market shadow collection (moneyline / run line / game total).
+# History shape changes bump the schema version; the market baseline is an
+# observation-only no-vig conversion of collected prices, not a model opinion.
+GAME_MARKETS_HISTORY_SCHEMA_VERSION = 1
+GAME_MARKETS_PRICE_SHADOW_VERSION = "game-price-shadow-v1"
