@@ -50,6 +50,52 @@ class FetchRetryTests(unittest.TestCase):
                 fetch_text("https://example.test/x", attempts=3, backoff_seconds=0.01)
         self.assertEqual(calls["count"], 1)
 
+    def test_timeout_error_retries_and_succeeds(self) -> None:
+        calls = {"count": 0}
+
+        class FlakyResponse:
+            def __init__(self, succeed: bool) -> None:
+                self._succeed = succeed
+
+            def read(self) -> bytes:
+                if not self._succeed:
+                    raise TimeoutError("The read operation timed out")
+                return b'{"ok": true}'
+
+            def __enter__(self) -> "FlakyResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        def flaky_urlopen(request, timeout=30):
+            calls["count"] += 1
+            return FlakyResponse(succeed=calls["count"] >= 3)
+
+        with patch("mlb_props.utils.urlopen", side_effect=flaky_urlopen):
+            result = fetch_text("https://example.test/x", attempts=3, backoff_seconds=0.01)
+        self.assertEqual(result, '{"ok": true}')
+        self.assertEqual(calls["count"], 3)
+
+    def test_persistent_timeout_error_raises(self) -> None:
+        class TimeoutResponse:
+            def read(self) -> bytes:
+                raise TimeoutError("The read operation timed out")
+
+            def __enter__(self) -> "TimeoutResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        def always_timeout(request, timeout=30):
+            return TimeoutResponse()
+
+        with patch("mlb_props.utils.urlopen", side_effect=always_timeout):
+            with self.assertRaises(RuntimeError):
+                fetch_text("https://example.test/x", attempts=3, backoff_seconds=0.01)
+
+
 
 class CacheFallbackTests(unittest.TestCase):
     def _cache(self, tmp: Path) -> JsonCache:

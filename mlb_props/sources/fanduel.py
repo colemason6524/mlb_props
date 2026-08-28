@@ -115,7 +115,13 @@ class MlbFanDuelSource:
             self._diagnostics["team_pages_from_cache"] += 1
             return cached, True
 
-        html = fetch_text(f"{self.BASE_URL}/{slug}/odds")
+        try:
+            html = fetch_text(f"{self.BASE_URL}/{slug}/odds")
+        except RuntimeError:
+            self._diagnostics["team_pages_fetch_error"] = (
+                self._diagnostics.get("team_pages_fetch_error", 0) + 1
+            )
+            return None, False
         match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
         if not match:
             return None, False

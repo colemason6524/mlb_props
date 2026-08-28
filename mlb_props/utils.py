@@ -67,7 +67,7 @@ def ensure_dir(path: Path) -> None:
 def _is_retryable_error(exc: Exception) -> bool:
     if isinstance(exc, HTTPError):
         return 500 <= exc.code < 600 or exc.code == 429
-    if isinstance(exc, URLError):
+    if isinstance(exc, (URLError, TimeoutError)):
         return True
     return False
 
@@ -83,6 +83,8 @@ def _fetch_text_once(url: str, headers: dict[str, str] | None, timeout: int) -> 
     except HTTPError as exc:
         raise RuntimeError(f"HTTP {exc.code} for {url}") from exc
     except URLError as exc:
+        raise RuntimeError(f"Network error for {url}: {exc}") from exc
+    except TimeoutError as exc:
         raise RuntimeError(f"Network error for {url}: {exc}") from exc
 
 
