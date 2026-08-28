@@ -106,10 +106,53 @@ def _signed(value: int) -> str:
     return f"+{value}" if value > 0 else str(value)
 
 
+def format_bovada_diagnostics(diagnostics: dict) -> str:
+    fetch = diagnostics.get("coupon_fetch") or {}
+    parts = [
+        f"mode={fetch.get('mode') or 'unknown'}",
+        f"events={diagnostics.get('events_seen', 0)}",
+        f"parsed={diagnostics.get('games_parsed', 0)}",
+        f"current-day={diagnostics.get('games_matched_to_slate', 0)}",
+        f"stale={diagnostics.get('stale_games_filtered', 0)}",
+        f"wrong-date={diagnostics.get('wrong_date_games_filtered', 0)}",
+        f"empty-markets={diagnostics.get('empty_markets_filtered', 0)}",
+        f"unmatched-teams={len(diagnostics.get('unmatched_teams') or [])}",
+    ]
+    if fetch.get("error"):
+        parts.append(f"fetch-error={fetch['error']}")
+    lines = ["Bovada diagnostics: " + ", ".join(parts)]
+    stale_games = diagnostics.get("stale_games") or []
+    if stale_games:
+        lines.append("Bovada stale games: " + "; ".join(stale_games))
+    wrong_date_games = diagnostics.get("wrong_date_games") or []
+    if wrong_date_games:
+        lines.append("Bovada wrong-date games: " + "; ".join(wrong_date_games))
+    unmatched_teams = diagnostics.get("unmatched_teams") or []
+    if unmatched_teams:
+        lines.append("Bovada unmatched teams: " + "; ".join(unmatched_teams))
+    return "\n".join(lines)
+
+
+def format_espn_diagnostics(diagnostics: dict) -> str:
+    parts = [
+        f"mode={diagnostics.get('mode') or 'unknown'}",
+        f"parsed={diagnostics.get('games_parsed', 0)}",
+        f"totals={diagnostics.get('with_total', 0)}",
+        f"spreads={diagnostics.get('with_spreads', 0)}",
+    ]
+    if diagnostics.get("error"):
+        parts.append(f"error={diagnostics['error']}")
+    return "ESPN diagnostics: " + ", ".join(parts)
+
+
 def main() -> int:
     try:
-        exit_code = _run()
-        record_run(outcome="success" if exit_code == 0 else "failed", task="game_markets_shadow")
+        exit_code, message = _run()
+        record_run(
+            outcome="success" if exit_code == 0 else "failed",
+            task="game_markets_shadow",
+            message=message,
+        )
         return exit_code
     except Exception as exc:
         record_run(
@@ -120,7 +163,7 @@ def main() -> int:
         raise
 
 
-def _run() -> int:
+def _run() -> tuple[int, str]:
     settings = load_settings()
     shared_cache = JsonCache(CACHE_DIR / "shared", ttl_hours=settings.cache_ttl_hours)
     lines_cache = JsonCache(CACHE_DIR / "lines", ttl_hours=settings.lines_cache_ttl_minutes / 60.0)
@@ -179,11 +222,25 @@ def _run() -> int:
         f"ML {coverage['with_moneyline']}, RL {coverage['with_spread']}, "
         f"total {coverage['with_total']}; ESPN cross-check {coverage['espn_cross_check_totals']} totals."
     )
+    if unmatched_slate_games:
+        print("Unmatched slate games: " + "; ".join(unmatched_slate_games))
+    print(format_bovada_diagnostics(bovada_diagnostics))
+    print(format_espn_diagnostics(espn_diagnostics))
 
+    empty_message = ""
     if not snapshots:
-        print("Warning: no game market snapshots collected; treat this run as unsuitable for evaluation.", file=sys.stderr)
+        empty_message = (
+            "no game market snapshots collected; "
+            f"coverage {coverage['matched_with_lines']}/{coverage['slate_games']}"
+        )
+        print(
+            "Warning: no game market snapshots collected; treat this run as unsuitable for evaluation.",
+            file=sys.stderr,
+        )
 
-    if settings.export_history and snapshots:
+    # Export even on empty coverage so scheduled runs leave a diagnosed history
+    # file instead of a silent gap. Empty files are unsuitable for evaluation.
+    if settings.export_history:
         export_path = export_run_history(
             "game_markets",
             {
@@ -194,6 +251,7 @@ def _run() -> int:
                 "run_note": settings.run_note,
                 "observation_only": True,
                 "coverage": coverage,
+                "unmatched_slate_game_names": unmatched_slate_games,
                 "source_diagnostics": {
                     "bovada": bovada_diagnostics,
                     "espn": espn_diagnostics,
@@ -206,7 +264,7 @@ def _run() -> int:
         )
         print(f"History exported to {export_path}")
 
-    return 0
+    return 0, empty_message
 
 
 if __name__ == "__main__":

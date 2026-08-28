@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
+
+EASTERN = ZoneInfo("America/New_York")
 
 BOVADA_BASE = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
 BOVADA_MLB_URL = f"{BOVADA_BASE}/baseball/mlb?marketFilterId=def&preMatchOnly=true"
@@ -336,6 +339,7 @@ def fetch_game_markets(
     markets_by_key: dict[tuple[str, str], Any] = {}
     stale_filtered: list[str] = []
     wrong_date_filtered: list[str] = []
+    empty_markets_filtered: list[str] = []
     for game in games:
         label = f"{game.away_abbr} @ {game.home_abbr}"
         kickoff = None
@@ -347,12 +351,13 @@ def fetch_game_markets(
         if kickoff is None or kickoff <= now:
             stale_filtered.append(label)
             continue
-        local_date = kickoff.astimezone().date() if kickoff else None
+        local_date = kickoff.astimezone(EASTERN).date() if kickoff else None
         if local_date is not None and local_date != screen_date:
             wrong_date_filtered.append(label)
             continue
         markets = game.markets or {}
         if not markets:
+            empty_markets_filtered.append(label)
             continue
         serialized = {name: market.as_dict() for name, market in markets.items()}
         markets_by_key[(game.away_abbr, game.home_abbr)] = {
@@ -371,6 +376,10 @@ def fetch_game_markets(
         "with_total": sum(1 for item in markets_by_key.values() if item.get("total")),
         "stale_games_filtered": len(stale_filtered),
         "wrong_date_games_filtered": len(wrong_date_filtered),
+        "empty_markets_filtered": len(empty_markets_filtered),
+        "stale_games": stale_filtered,
+        "wrong_date_games": wrong_date_filtered,
+        "empty_market_games": empty_markets_filtered,
         "coupon_fetch": coupon.as_dict(),
     }
     return markets_by_key, diagnostics

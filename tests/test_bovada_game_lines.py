@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from mlb_props.sources.bovada_mlb import (
     BovadaGame,
+    fetch_game_markets,
     normalize_team_name,
     parse_games,
 )
@@ -110,6 +115,74 @@ class ParseGamesTests(unittest.TestCase):
         ]
         games, _ = parse_games([{"events": [event]}])
         self.assertNotIn("spread", games[0].markets)
+
+
+class FetchGameMarketsTests(unittest.TestCase):
+    def _write_coupon(self, cache_dir: Path, events: list[dict]) -> None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "bovada_mlb.json").write_text(json.dumps([{"events": events}]))
+
+    def test_past_kickoff_is_stale_and_excluded(self) -> None:
+        event = _event()
+        event["startTime"] = int((datetime.now(timezone.utc) - timedelta(hours=16)).timestamp() * 1000)
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            self._write_coupon(cache_dir, [event])
+            markets, diagnostics = fetch_game_markets(cache_dir, date.today(), refresh=False)
+        self.assertEqual(markets, {})
+        self.assertEqual(diagnostics["stale_games_filtered"], 1)
+        self.assertEqual(diagnostics["games_matched_to_slate"], 0)
+        self.assertIn("NYY @ BOS", diagnostics["stale_games"])
+
+    def test_future_same_eastern_date_is_kept(self) -> None:
+        kickoff = datetime.now(timezone.utc) + timedelta(hours=6)
+        event = _event()
+        event["startTime"] = int(kickoff.timestamp() * 1000)
+        screen_date = kickoff.astimezone(ZoneInfo("America/New_York")).date()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            self._write_coupon(cache_dir, [event])
+            markets, diagnostics = fetch_game_markets(cache_dir, screen_date, refresh=False)
+        self.assertIn(("NYY", "BOS"), markets)
+        self.assertEqual(diagnostics["stale_games_filtered"], 0)
+        self.assertEqual(diagnostics["wrong_date_games_filtered"], 0)
+        self.assertIsNotNone(markets[("NYY", "BOS")]["moneyline"])
+
+    def test_future_wrong_date_is_filtered(self) -> None:
+        kickoff = datetime.now(timezone.utc) + timedelta(hours=48)
+        event = _event()
+        event["startTime"] = int(kickoff.timestamp() * 1000)
+        screen_date = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            self._write_coupon(cache_dir, [event])
+            markets, diagnostics = fetch_game_markets(cache_dir, screen_date, refresh=False)
+        self.assertEqual(markets, {})
+        self.assertEqual(diagnostics["wrong_date_games_filtered"], 1)
+        self.assertIn("NYY @ BOS", diagnostics["wrong_date_games"])
+
+    def test_yesterday_leftover_coupon_does_not_match_today(self) -> None:
+        """Reproduce the 8/28 11:40 case: coupon still lists last night's games."""
+        leftover = _event()
+        leftover["description"] = "Houston Astros @ New York Yankees"
+        leftover["startTime"] = int((datetime.now(timezone.utc) - timedelta(hours=16)).timestamp() * 1000)
+        leftover["displayGroups"][0]["markets"][0]["outcomes"] = [
+            _outcome("New York Yankees", -161),
+            _outcome("Houston Astros", 135),
+        ]
+        leftover["displayGroups"][0]["markets"][1]["outcomes"] = [
+            _outcome("New York Yankees", 135, handicap=-1.5),
+            _outcome("Houston Astros", -160, handicap=1.5),
+        ]
+        screen_date = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            self._write_coupon(cache_dir, [leftover])
+            markets, diagnostics = fetch_game_markets(cache_dir, screen_date, refresh=False)
+        self.assertEqual(markets, {})
+        self.assertEqual(diagnostics["events_seen"], 1)
+        self.assertGreaterEqual(diagnostics["stale_games_filtered"], 1)
+        self.assertEqual(diagnostics["coupon_fetch"]["mode"], "cache")
 
 
 if __name__ == "__main__":

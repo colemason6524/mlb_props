@@ -75,6 +75,13 @@ The evening run re-snapshots lines after lineups post; starter changes
 between snapshots will be detectable later by comparing probable pitchers
 in successive history exports.
 
+Empty coverage still exits 0 (so the scheduled task is not marked failed)
+but now always writes a history file with source diagnostics. Treat those
+exports as unsuitable for evaluation. Bovada's prematch coupon can still
+list the previous night's unsettled games at 11:40 ET before today's slate
+is posted; the collector filters those as stale. ESPN is a cross-check only
+and does not supply moneylines, so it cannot fill a Bovada-empty morning.
+
 ## Architecture notes
 
 - The repo mirrors the NBA system's flow, not its sport logic.
