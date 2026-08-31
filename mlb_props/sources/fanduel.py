@@ -12,6 +12,36 @@ from ..utils import fetch_text, normalize_name
 from .mlb_stats_api import build_probable_pitcher_index
 
 
+def _parse_player_odd(value: object) -> int | None:
+    """Parse FanDuel PlayerOdd.playerOdd American odds ("-113", "+102") to int."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        try:
+            numeric = int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+    return numeric if numeric != 0 else None
+
+
+def _over_under_prices_from_player_props(player_props: list) -> tuple[int | None, int | None]:
+    """Map team-page playerPropsForGame to (over_price, under_price).
+
+    FanDuel renders Over then Under (player-strikeout-over-odd-button, then
+    player-strikeout-under-odd-button). JSON order matches: index 0 Over,
+    index 1 Under. Same marketId, consecutive selectionIds.
+    """
+    over_price = None
+    under_price = None
+    if player_props and isinstance(player_props[0], dict):
+        over_price = _parse_player_odd(player_props[0].get("playerOdd"))
+    if len(player_props) > 1 and isinstance(player_props[1], dict):
+        under_price = _parse_player_odd(player_props[1].get("playerOdd"))
+    return over_price, under_price
+
+
 class MlbFanDuelSource:
     BASE_URL = "https://sportsbook.fanduel.com/teams/mlb"
 
@@ -208,6 +238,8 @@ class MlbFanDuelSource:
                     "player_props": player_props[:3],
                 },
             )
+        over_price, under_price = _over_under_prices_from_player_props(player_props)
+        collected_at = datetime.now(timezone.utc)
         return (
             PropLine(
                 event_id=game.game_id,
@@ -223,7 +255,14 @@ class MlbFanDuelSource:
                 line=float(line_value),
                 bookmaker="fanduel",
                 source="fanduel_scrape",
-                collected_at=datetime.now(timezone.utc),
+                collected_at=collected_at,
+                over_price=over_price,
+                under_price=under_price,
+                price_collected_at=(
+                    collected_at.isoformat()
+                    if over_price is not None or under_price is not None
+                    else None
+                ),
             ),
             None,
             {},
