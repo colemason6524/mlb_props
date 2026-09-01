@@ -16,17 +16,21 @@ The long-term goal is a Discord board that another group could depend on. That r
 
 Production commit: `8b23aab Collect pitcher recency projection shadow`
 
-Deployed versions (production, as of 2026-08-17):
+Deployed versions (production, as of 2026-08-31):
 
-- history schema: `6`
-- active projection model: `pitcher-k-situational-v1`
-- tier policy: `core-lean-watch-v1`
+- history schema: `7`
+- active projection model: `pitcher-k-hybrid-v2`
+- tier policy: `core-lean-watch-v2`
 - opportunity shadow: `opportunity-shadow-v1`
 - recency shadow: `recency-shadow-v1`
-- confidence model: `pitcher-confidence-provisional-v1`
+- confidence model: `pitcher-confidence-calibrated-v2`
 - display policy: `provisional-confidence-rank-v1`
 
-The active projection model and tier policy have not been changed by either shadow or by the confidence presentation work.
+2026-08-31 changes, each a separate versioned commit: the recency-shadow
+aggregate K/BF blend is now the production K-rate (`pitcher-k-hybrid-v2`); Core
+requires the UNDER side with a 1.5 edge cap and a 0.55 no-vig market-probability
+requirement when prices exist (`core-lean-watch-v2`); confidence applies a
+0.55 calibration shrink capped at 57% (`pitcher-confidence-calibrated-v2`).
 
 ### Local branch schema-7 research candidate (not yet deployed to Windows)
 
@@ -152,29 +156,29 @@ The old additive score is now called `Signal balance`. It is a diagnostic, not a
 
 Public Discord output leads with provisional confidence, side, line, projection edge, and workload reliability. Terminal and history retain the raw signal for diagnosis.
 
-## Provisional Confidence
+## Calibrated Confidence
 
-`pitcher-confidence-provisional-v1` estimates the price-independent chance that the listed side clears the posted line. It is not a conversion of signal score.
+`pitcher-confidence-calibrated-v2` estimates the price-independent chance that the listed side clears the posted line. It is not a conversion of signal score.
 
-It uses an overdispersed count distribution around projected strikeouts or outs, incorporates opportunity/volatility uncertainty, and shrinks toward 50% when workload reliability, sample size, or risk flags are weak.
+It uses an overdispersed count distribution around projected strikeouts or outs, incorporates opportunity/volatility uncertainty, shrinks toward 50% when workload reliability, sample size, or risk flags are weak, and then applies a first-pass calibration shrink of `0.55` fitted on the graded schema-6 sample (August 5-20). That grading showed every old forecast band above 57% was overconfident: `60%+` observed 40.0% and `57-59%` observed 42.4%, while mid bands roughly matched.
 
 Labels:
 
-- `60%+`: Strong
-- `57-59%`: Solid
+- `60%+`: Strong (intentionally unreachable until a larger sample proves a deserving band)
+- `57-59%`: Solid (only the `57%` cap value lands here)
 - `54-56%`: Cautious
 - `51-53%`: Higher Risk
 - `50%`: No Pick
 
 Safeguards:
 
-- capped at `68%` while uncalibrated
-- marked `PROVISIONAL`
+- capped at `57%`
+- `calibration_status: CALIBRATED_V1`, `calibration_shrink: 0.55` recorded on every estimate
 - `price_included: false`
-- cannot change active projection, qualification, score, or tier
+- cannot change active projection, qualification, or score; Core tier now gates on market no-vig probability separately
 - low reliability and risk only shrink toward 50%; they cannot manufacture edge
 
-These percentages are not expected value, profitability, or staking recommendations. Exact FanDuel side prices are not collected. Singles are the correct unit for calibration; parlays compound estimation error and correlation. Odds integration was intentionally deferred because it would add fragile sourcing work before probability calibration is proven.
+These percentages are not expected value, profitability, or staking recommendations. Singles are the correct unit for calibration; parlays compound estimation error and correlation. FanDuel both-side prices are collected in the price shadow as of commit `8de164b`; they feed the Core market-support gate and history, but confidence itself remains price-agnostic by design.
 
 ## Research Shadows
 
@@ -282,7 +286,7 @@ Both MLB scheduled tasks recovered normally on 2026-08-17 and sent Discord succe
 - Park factor is general run environment, not a strikeout-specific park factor.
 - Projected lineups are recent-lineup proxies with active-roster fallback until official lineups are available.
 - Player IDs protect continuity across trades; team context and lineups must still reflect the current slate.
-- Confidence and both shadows are uncalibrated.
+- Confidence is calibrated (v1, small sample); both shadows remain uncalibrated research layers.
 - Shadow presence in JSON is not evidence of improvement.
 - The normal backtest scopes grade saved displayed tiers, not every line evaluated or every line excluded by the active gate.
 - Abnormal slates, late runs, source failures, All-Star breaks, pending outcomes, and DNP/no-start cases must not drive tuning.
@@ -290,31 +294,17 @@ Both MLB scheduled tasks recovered normally on 2026-08-17 and sent Discord succe
 
 ## Next Logical Task
 
-Do not change production scoring first.
+The schema-6 grading task that used to live here is complete; its findings produced the 2026-08-31 activation commit set (hybrid K projection, Core gate rebuild, confidence recalibration). Do not stack further scoring changes on top until the new gates have their own graded sample.
 
-The next task is to grade the 12 schema-6 snapshots from August 5–17, excluding the missing August 16 run, and compare the active and recency-shadow projections.
+The next tasks are prospective, not retrospective:
 
-Use the Windows history directly over SSH; there is no need to copy it to Mac unless a small artifact is useful. Run the all-history backtest with Watch included against a focused schema-6 history directory or extend the report selection safely. Preserve point-in-time data and avoid lookahead.
+1. Verify the new pipeline on 3-5 completed slates: price-shadow coverage on every eligible candidate, `model_version` / `tier_policy_version` / `confidence_model_version` correct in exports, and Core appearing only for market-backed unders.
+2. Extend `.analysis/first_hunt_under_ks.py` into a repeatable weekly grader (one command, combined schema-6/7 rows, price-shadow EV versus no-vig baseline, saved to `.analysis/`).
+3. Pre-register an explicit unders policy (for example UNDER + line <= 4.5 + LOW/MED opportunity confidence) and grade it daily against the always-under baseline. The August edge (59.8% vs 55.5%) was not significant; September is the test window.
+4. Grade the new Core gates and calibrated confidence bands once roughly 50-100 new candidates resolve. If the `0.55` no-vig Core threshold proves too tight or too loose against accumulated prices, change it as a separate `core-lean-watch-v3` commit.
+5. Build the game-markets line-movement report (morning versus evening snapshots, starter-change detection) once two full weeks of collection exist.
 
-The review should answer:
-
-- How many predictions resolve, push, void, remain pending, or remain unmatched?
-- Active versus shadow K bias and MAE
-- Active versus shadow BF bias and MAE
-- Active versus shadow confidence Brier score and calibration bands
-- Results by L5 outcome band, side, tier, workload reliability, projection edge, and matchup/risk flags
-- Whether improvement is stable across slates rather than driven by one day or one pitcher
-- How often current and shadow side/edge materially disagree
-- Whether the shadow only improves admitted candidates while leaving excluded-line uncertainty unresolved
-
-The activation gate remains:
-
-- validate data quality and missingness first
-- use resolved candidates, not the raw count of 195 saved profiles
-- require a meaningful sample, approximately 50–100 resolved candidates at minimum
-- demand improvement across multiple diagnostics/windows
-- make any activation a separate change with a new `PITCHER_MODEL_VERSION`
-- do not change `mlb_props/tiers.py` in the same experiment
+Keep the discipline that worked so far: pregame snapshots only, abnormal slates excluded from conclusions, and every production change as its own versioned commit.
 
 ## Pickup Checklist
 
@@ -325,6 +315,6 @@ The activation gate remains:
 5. Review `run_nightly.py`, `backtest.py`, screener, tiers, confidence, presentation, both shadows, output, sources, and task wrappers.
 6. Inspect Windows production directly with `ssh windows`.
 7. Confirm task result, latest history, coverage diagnostics, and deployed commit before interpreting an empty board.
-8. Grade schema-6 history before proposing any new pitcher formula.
+8. Grade the current window's history before proposing any new pitcher formula; the schema-6 grade lives in `.analysis/schema6/pitcher_schema6_report.md` and the unders analysis in `.analysis/first_hunt/`.
 9. Run `PYTHONPYCACHEPREFIX=.pycache python3 -m unittest discover -s tests` and compilation checks before committing.
 10. Stage named files and inspect `git diff --cached`; never discard local transfer-ignore or tier-comment edits.

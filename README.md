@@ -152,14 +152,15 @@ Current pitcher tiers:
 - Lean: score/context is interesting and projected edge is real, but one or more Core requirements is missing
 - Watchlist: broad data-collection tier; useful for model learning, not meant as auto-plays
 
-Core tier gates are deliberately stricter than raw score:
+Core tier gates (`core-lean-watch-v2`) were rebuilt on 2026-08-31 from the graded August 5-30 sample after the old shape produced a 2-13 Core record:
 
-- side-adjusted projected edge must be at least `1.0`
-- volatile candidates need at least `1.25` edge
-- unders need at least `1.25` edge
+- Core requires the UNDER side (overs hit 48.6% vs unders 59.8% in the graded sample)
+- projection edge must be capped at `1.5` (edges of 2.0+ hit only 16.7%)
+- unders still need at least `1.25` edge
 - unders are blocked from Core when projected opportunity is high: projected outs at least `18.0`, projected batters faced at least `24.5`, or workload/depth flags such as `DEPTH_PLUS`, `WORKLOAD_PLUS`, or `QS_PLUS`
+- when both-side prices are available, the side's no-vig market probability must be at least `0.55`; unpriced lines fall back to the non-price gates so learning data still flows
 
-This split was added after weekly reviews showed small-edge plays and broad Watchlist picks were noisy, while stricter Core plays looked more promising. Keep evaluating that decision with fresh samples; do not treat the current thresholds as proven by a large sample yet.
+Continue grading the new gates daily; the no-vig threshold in particular should be re-examined once several weeks of price-shadow history accumulate.
 
 #### Pitcher research checkpoint: 2026-07-28
 
@@ -200,11 +201,11 @@ Commit `7925666` added a research-only opportunity profile. It is intentionally 
 
 Current version metadata:
 
-- history schema: `5`
-- active pitcher model: `pitcher-k-situational-v1`
-- tier policy: `core-lean-watch-v1`
+- history schema: `7`
+- active pitcher model: `pitcher-k-hybrid-v2`
+- tier policy: `core-lean-watch-v2`
 - shadow feature set: `opportunity-shadow-v1`
-- confidence model: `pitcher-confidence-provisional-v1`
+- confidence model: `pitcher-confidence-calibrated-v2`
 - display policy: `provisional-confidence-rank-v1`
 
 Every eligible candidate and full starter-board entry now saves:
@@ -266,7 +267,7 @@ Provisional labels are:
 Safeguards:
 
 - confidence does not change projected strikeouts, projected opportunity, raw score, candidate qualification, or Core/Lean/Watch tier
-- estimates are deterministic and capped at `68%` while uncalibrated
+- estimates are deterministic; since 2026-08-31 they are calibrated (shrink `0.55`) and capped at `57%`
 - risk and low workload reliability can only shrink directional confidence toward `50%`; they do not create an edge
 - Discord omits raw signal balance and leads with provisional confidence, side, line, projection edge, and workload reliability
 - terminal output retains signal balance for diagnosis
@@ -274,6 +275,16 @@ Safeguards:
 - backtests report forecast-versus-observed results by confidence band plus Brier score
 
 Do not describe these percentages as profitable-bet probabilities or expected value. Exact FanDuel Over/Under prices are not collected. Keep normal outcome grading on singles, collect at least 50-100 resolved estimates, and verify that each confidence band behaves approximately as advertised before removing the `PROVISIONAL` label or changing tier policy.
+
+#### Calibration and hybrid activation checkpoint: 2026-08-31
+
+Grading the schema-6 and schema-7 history (August 5-30, 339 resolved candidates) produced three production changes, each a separate versioned commit:
+
+1. `pitcher-k-hybrid-v2`: the recency-shadow aggregate K/BF blend (50% season, 30% L10, 20% L5) is now the production K-rate. Evidence: shadow K MAE 1.89 vs active 1.95, bias +0.01 vs -0.09, date-blocked bootstrap `P(shadow worse) = 0.4%`. Projected outs and batters faced keep the situational opportunity projection because the shadow BF variant was slightly worse.
+2. `core-lean-watch-v2`: Core requires the UNDER side, caps edge at `1.5`, and requires no-vig market probability of at least `0.55` when prices exist. Evidence: Core was 2-13 (15.4%); 2.0+ edges hit 16.7%; overs 48.6% vs unders 59.8%.
+3. `pitcher-confidence-calibrated-v2`: confidence bands above 57% forecast observed 15-32 points lower. The display scale now applies a calibration shrink of `0.55` and caps at `57%`, so STRONG is intentionally unreachable pending a larger sample.
+
+The recency shadow remains exported for full-shadow (shadow rate plus shadow BF) comparison. The First Hunt unders findings (model unders 59.8% vs always-under 55.5%, small-edge unders best) motivated the Core rebuild but remain short of significance; September is the pre-registered prospective test window for an explicit unders policy.
 
 #### L5 recency research checkpoint: 2026-08-04
 
@@ -523,7 +534,7 @@ No Task Scheduler command change is required for schema 6, the confidence/displa
 
 ```text
 history_schema_version : 6
-model_version           : pitcher-k-situational-v1
+model_version           : pitcher-k-hybrid-v2
 tier_policy_version     : core-lean-watch-v1
 shadow_feature_version  : opportunity-shadow-v1
 recency_shadow_version  : recency-shadow-v1
@@ -666,7 +677,7 @@ Pitcher prop screen:
 
 Pitcher presentation semantics:
 
-- provisional confidence is the price-agnostic estimated chance that the listed side clears the line; it is not yet calibrated or an expected-value estimate
+- confidence is the price-agnostic estimated chance that the listed side clears the line; since 2026-08-31 it is calibrated on the graded August sample (shrink `0.55`, capped `57%`) and still is not an expected-value estimate
 - raw score remains available as `Signal balance` in terminal/history diagnostics, but it is omitted from the public Discord card
 - slate rank follows provisional confidence and remains separate from the absolute Core/Lean/Watch tier
 - `Best Available` is a display role for up to three existing Lean/Watch candidates when no Core exists; it does not alter history tier or backtest scope
@@ -700,7 +711,7 @@ Do not add these shadow values to score or tier policy merely because they are p
 - If a live board comes back empty under the primary thresholds, the runner automatically retries with a softer live fallback profile so you still get a usable practice board.
 - The starter board is line-independent and is meant for daily assessment; its matchup columns are pitcher-friendly when positive and tougher when negative.
 - `EXPORT_HISTORY=true` writes backtest-ready screen snapshots to `outputs/history/`, and `python3 backtest.py` reconciles saved strikeout plays the next day.
-- Current schema-6 pitcher exports save `opportunity-shadow-v1` profiles, `recency-shadow-v1` alternative projections, `pitcher-confidence-provisional-v1` estimates, and `provisional-confidence-rank-v1` display rankings, but the active production model remains `pitcher-k-situational-v1`.
+- Current schema-7 pitcher exports save `opportunity-shadow-v1` profiles, `recency-shadow-v1` alternative projections, `pitcher-confidence-calibrated-v2` estimates, and `provisional-confidence-rank-v1` display rankings. Since 2026-08-31 the active production model is `pitcher-k-hybrid-v2` and the tier policy is `core-lean-watch-v2`.
 - History schema changes, projection-model changes, tier-policy changes, and shadow-feature changes are versioned separately. A schema bump does not by itself mean recommendations changed.
 - Confidence, display-policy, and recency-shadow changes are versioned separately. The schema-6 bump records additional research history; it does not change active projections, score calculations, or Core/Lean/Watch eligibility.
 - Shadow collection requires no Task Scheduler modification; pulling current `main` is sufficient.
@@ -708,7 +719,7 @@ Do not add these shadow values to score or tier policy merely because they are p
 - Only exported displayed buckets are graded by the normal backtest scopes. `model_opinions` and `starter_board` are saved for later research, but they are not the default backtest target.
 - Late or in-progress slate runs can produce thin line coverage because books remove markets after games start. Do not tune the model from thin/source-failed runs.
 - All-Star break, no-game days, one-game slates, and other abnormal windows can produce empty or tiny pitcher samples. Treat those as operational diagnostics rather than model-quality evidence.
-- Recent pitcher reviews showed Core has looked better than the broader displayed board, but samples are still small. Watchlist should stay broad for data collection; Core should remain stricter until more evidence accumulates.
+- The graded August 5-30 sample showed the old Core gates were anti-selecting (Core 2-13), so Core was rebuilt on 2026-08-31 as UNDER-only with a `1.5` edge cap and a `0.55` no-vig market-probability requirement when prices exist. Watchlist should stay broad for data collection; grade the new Core gates daily before trusting them.
 - Empty Core slates should not be filled by lowering the absolute standard. Use relative slate rank and the explicit `Best Available` label to surface the strongest Lean/Watch opinions honestly.
 - Pitcher unders are intentionally treated more cautiously than overs because they can fail on deeper-than-expected outings, traffic/extra batters, or one-game K-rate spikes.
 - Known limitation: the FanDuel scraper depends on sportsbook page structure and team pages. If coverage is thin, inspect `outputs/diagnostics/scrape_sources_*.json` and task logs before assuming the model found no opportunities.
@@ -779,7 +790,7 @@ The focused pitcher handoff is the canonical source for the August 17 operationa
 - Read `Pitcher Props Objective And Design`, `Current scoring inputs`, `Current assumptions`, and this handoff section before changing pitcher logic.
 - Before changing Hot Hits scoring or Discord selection, read `Hot Hits Objective And Design`, `Hot Hits Review And Grading`, and `docs/HOT_HITS_HANDOFF.md`.
 - Run `git status -sb` first and preserve unrelated uncommitted work. Pitcher Props and Hot Hits intentionally share this repository.
-- Confirm the active versions in `mlb_props/version.py`. As of 2026-08-04 they are history schema `6`, model `pitcher-k-situational-v1`, tier policy `core-lean-watch-v1`, opportunity shadow `opportunity-shadow-v1`, recency shadow `recency-shadow-v1`, confidence model `pitcher-confidence-provisional-v1`, and display policy `provisional-confidence-rank-v1`.
+- Confirm the active versions in `mlb_props/version.py`. As of 2026-08-31 they are history schema `7`, model `pitcher-k-hybrid-v2`, tier policy `core-lean-watch-v2`, opportunity shadow `opportunity-shadow-v1`, recency shadow `recency-shadow-v1`, confidence model `pitcher-confidence-calibrated-v2`, and display policy `provisional-confidence-rank-v1`.
 - Treat opportunity estimates as observation-only for recommendation logic. Confidence and warning flags may be displayed, but they must not feed scores or tier decisions until the review gates below are met.
 - After transferring a completed Windows collection window, review all saved learning tiers with:
 
