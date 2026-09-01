@@ -18,19 +18,22 @@ Production commit: `8b23aab Collect pitcher recency projection shadow`
 
 Deployed versions (production, as of 2026-08-31):
 
-- history schema: `7`
+- history schema: `8`
 - active projection model: `pitcher-k-hybrid-v2`
 - tier policy: `core-lean-watch-v2`
 - opportunity shadow: `opportunity-shadow-v1`
 - recency shadow: `recency-shadow-v1`
 - confidence model: `pitcher-confidence-calibrated-v2`
+- daily card policy: `daily-unders-card-v1`
 - display policy: `provisional-confidence-rank-v1`
 
 2026-08-31 changes, each a separate versioned commit: the recency-shadow
 aggregate K/BF blend is now the production K-rate (`pitcher-k-hybrid-v2`); Core
 requires the UNDER side with a 1.5 edge cap and a 0.55 no-vig market-probability
 requirement when prices exist (`core-lean-watch-v2`); confidence applies a
-0.55 calibration shrink capped at 57% (`pitcher-confidence-calibrated-v2`).
+0.55 calibration shrink capped at 57% (`pitcher-confidence-calibrated-v2`);
+and the Daily Unders Card was pre-registered as a separate daily-volume policy
+(`daily-unders-card-v1`, schema 8).
 
 ### Local branch schema-7 research candidate (not yet deployed to Windows)
 
@@ -292,17 +295,29 @@ Both MLB scheduled tasks recovered normally on 2026-08-17 and sent Discord succe
 - Abnormal slates, late runs, source failures, All-Star breaks, pending outcomes, and DNP/no-start cases must not drive tuning.
 - Unders remain riskier because deeper outings, extra BF, and K-rate spikes can defeat them.
 
+## Daily Unders Card (pre-registered)
+
+The Daily Card is the daily-volume product: a separate pre-registered policy, not a Core/Lean/Watch tier. It answers the user goal of "a few accurate picks each day" without weakening the absolute Core standard.
+
+- Gates (`daily-unders-card-v1`, frozen 2026-08-31): PITCHER_STRIKEOUTS, UNDER side, line <= 5.5, |projected Ks - line| <= 1.0, drawn from all qualified candidates including non-displayed tiers, ranked by calibrated confidence, capped at 4.
+- Derivation: combined Aug 5-29 grading (n=97, 61.9% hit, stable 61.8%/61.9% across both windows, ~4.4 plays/day vs 52.4% breakeven and 55.5% always-under baseline).
+- Selection lives in `mlb_props/daily_card.py`; rendering in `mlb_props/output.py` (`render_daily_card`, `_daily_card_embed_field`); the nightly export saves `daily_card` rows plus `daily_card_policy_version` (schema 8, additive).
+- The morning backtest (`backtest.py`) resolves and reports the delivered card automatically; `pitcher_grading.daily_card_summary` computes hit rate, units at -110, and the always-under baseline over the same snapshots for weekly review.
+- Pre-registered success rule: trust at >= 55% with n >= 100 graded plays; marginal at 52.4-55% (requires price-based EV check); kill below 52.4%. Changing the gates requires a new policy version and a separate commit.
+- Do not pad the card. Zero-pick days are valid outcomes and are reported honestly.
+
 ## Next Logical Task
 
 The schema-6 grading task that used to live here is complete; its findings produced the 2026-08-31 activation commit set (hybrid K projection, Core gate rebuild, confidence recalibration). Do not stack further scoring changes on top until the new gates have their own graded sample.
 
 The next tasks are prospective, not retrospective:
 
-1. Verify the new pipeline on 3-5 completed slates: price-shadow coverage on every eligible candidate, `model_version` / `tier_policy_version` / `confidence_model_version` correct in exports, and Core appearing only for market-backed unders.
-2. Extend `.analysis/first_hunt_under_ks.py` into a repeatable weekly grader (one command, combined schema-6/7 rows, price-shadow EV versus no-vig baseline, saved to `.analysis/`).
-3. Pre-register an explicit unders policy (for example UNDER + line <= 4.5 + LOW/MED opportunity confidence) and grade it daily against the always-under baseline. The August edge (59.8% vs 55.5%) was not significant; September is the test window.
-4. Grade the new Core gates and calibrated confidence bands once roughly 50-100 new candidates resolve. If the `0.55` no-vig Core threshold proves too tight or too loose against accumulated prices, change it as a separate `core-lean-watch-v3` commit.
-5. Build the game-markets line-movement report (morning versus evening snapshots, starter-change detection) once two full weeks of collection exist.
+1. Verify the new pipeline on 3-5 completed slates: price-shadow coverage on every eligible candidate, `model_version` / `tier_policy_version` / `confidence_model_version` / `daily_card_policy_version` correct in exports, Core appearing only for market-backed unders, and the Daily Card populated with small-edge unders.
+2. Grade the Daily Card daily via the morning backtest and weekly via `pitcher_grading.daily_card_summary`; apply the pre-registered success rule at season end.
+3. Grade the new Core gates and calibrated confidence bands once roughly 50-100 new candidates resolve. If the `0.55` no-vig Core threshold proves too tight or too loose against accumulated prices, change it as a separate `core-lean-watch-v3` commit.
+4. Add the no-vig market-support gate as `daily-unders-card-v2` once roughly two weeks of priced rows exist; evaluate whether it improves the card before adopting.
+5. Extend `.analysis/first_hunt_under_ks.py` into a repeatable weekly grader (one command, combined rows, price-shadow EV versus no-vig baseline, saved to `.analysis/`).
+6. Build the game-markets line-movement report (morning versus evening snapshots, starter-change detection) once two full weeks of collection exist.
 
 Keep the discipline that worked so far: pregame snapshots only, abnormal slates excluded from conclusions, and every production change as its own versioned commit.
 

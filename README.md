@@ -32,7 +32,8 @@ And a game-level market shadow collector (observation-only, no model opinions):
 - `mlb_props/screener.py`: pitcher scoring engine
 - `mlb_props/tiers.py`: pitcher Core/Lean/Watch tier policy
 - `mlb_props/pitcher_presentation.py`: relative slate rank, display-only opportunity reliability, and Best Available policy
-- `mlb_props/pitcher_confidence.py`: provisional price-agnostic side-win probability and confidence labels
+- `mlb_props/pitcher_confidence.py`: calibrated price-agnostic side-win probability and confidence labels
+- `mlb_props/daily_card.py`: pre-registered Daily Unders Card selection (`daily-unders-card-v1`)
 - `mlb_props/opportunity.py`: research-only pitcher workload/opportunity shadow model
 - `mlb_props/version.py`: pitcher history, active-model, tier-policy, shadow-feature, and display-policy versions
 - `mlb_props/output.py`: terminal rendering
@@ -201,12 +202,36 @@ Commit `7925666` added a research-only opportunity profile. It is intentionally 
 
 Current version metadata:
 
-- history schema: `7`
+- history schema: `8`
 - active pitcher model: `pitcher-k-hybrid-v2`
 - tier policy: `core-lean-watch-v2`
 - shadow feature set: `opportunity-shadow-v1`
 - confidence model: `pitcher-confidence-calibrated-v2`
+- daily card policy: `daily-unders-card-v1`
 - display policy: `provisional-confidence-rank-v1`
+
+#### Daily Unders Card (pre-registered 2026-08-31)
+
+The Daily Card is a separate, pre-registered segment policy for daily volume — the answer to "a few accurate picks each day" — and is deliberately not a Core/Lean/Watch tier. Core stays the rare, absolute standard; the card is where graded segment evidence supports daily picks.
+
+Gates, frozen before any September data existed:
+
+- `PITCHER_STRIKEOUTS`, UNDER side only
+- posted line at most `5.5`
+- absolute projection edge at most `1.0` (projection within one strikeout of the line)
+- drawn from every qualified candidate, including non-displayed tiers, because the graded August sample showed the best UNDER segment was mostly undisplayed
+- ranked by calibrated confidence (ties: side edge, then signal balance), capped at `4`
+- the card is never padded; zero-pick days are reported honestly
+
+Derivation (combined Aug 5-29, 339 resolved candidates): this segment hit `61.9%` (n=97), stable across the two independent windows (`61.8%` schema-6 / `61.9%` schema-7), at roughly `4.4` plays/day versus the `52.4%` breakeven at -110 and the `55.5%` always-under baseline.
+
+Pre-registered success rule for the September validation window:
+
+- `>= 55%` at `n >= 100` graded plays: the card is trusted for real staking in 2027
+- `52.4-55%`: marginal; requires a price-based EV check before any trust
+- `< 52.4%`: the policy is killed honestly
+
+The no-vig market-support gate is deferred to `daily-unders-card-v2` until roughly two weeks of price-shadow rows accumulate. Every export saves the exact delivered card (`daily_card` rows plus `daily_card_policy_version`, schema 8) so grading uses delivered rows, not a re-derivation. The morning backtest grades the card automatically; `pitcher_grading.daily_card_summary` computes hit rate, units at -110, and the always-under baseline for weekly review.
 
 Every eligible candidate and full starter-board entry now saves:
 
@@ -720,6 +745,7 @@ Do not add these shadow values to score or tier policy merely because they are p
 - Late or in-progress slate runs can produce thin line coverage because books remove markets after games start. Do not tune the model from thin/source-failed runs.
 - All-Star break, no-game days, one-game slates, and other abnormal windows can produce empty or tiny pitcher samples. Treat those as operational diagnostics rather than model-quality evidence.
 - The graded August 5-30 sample showed the old Core gates were anti-selecting (Core 2-13), so Core was rebuilt on 2026-08-31 as UNDER-only with a `1.5` edge cap and a `0.55` no-vig market-probability requirement when prices exist. Watchlist should stay broad for data collection; grade the new Core gates daily before trusting them.
+- Daily volume lives in the pre-registered Daily Unders Card, not in a loosened Core. Core stays rare and strict; the card is graded daily against the always-under baseline and follows the pre-registered success rule above.
 - Empty Core slates should not be filled by lowering the absolute standard. Use relative slate rank and the explicit `Best Available` label to surface the strongest Lean/Watch opinions honestly.
 - Pitcher unders are intentionally treated more cautiously than overs because they can fail on deeper-than-expected outings, traffic/extra batters, or one-game K-rate spikes.
 - Known limitation: the FanDuel scraper depends on sportsbook page structure and team pages. If coverage is thin, inspect `outputs/diagnostics/scrape_sources_*.json` and task logs before assuming the model found no opportunities.
