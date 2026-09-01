@@ -61,11 +61,13 @@ JULY_CIN_ABBOTT_PROPS = [
     },
 ]
 
+# Frozen July 1 2026 FanDuel AZ team-page capture. The live production cache
+# file is refreshed by scheduled runs, so this test reads a fixture instead of
+# .cache/lines to stay hermetic.
 JULY_AZ_CACHE = (
-    Path(__file__).resolve().parents[1]
-    / ".cache"
-    / "lines"
-    / "fanduel_mlb_team_arizona-diamondbacks.json"
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "fanduel_july_az_team_page.json"
 )
 
 

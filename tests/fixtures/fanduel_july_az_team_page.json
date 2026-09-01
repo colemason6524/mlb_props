@@ -1,0 +1,127 @@
+{
+ "data": {
+  "team": {
+   "teamLeader": {
+    "__typename": "MlbTeamLeaders",
+    "battingAverage": {
+     "__typename": "MlbTeamLeaderStatWithBet_BigDecimal",
+     "leader": {
+      "__typename": "MlbTeamPlayer",
+      "name": "Corbin Carroll",
+      "playerImageUrl": "https://d17odppiik753x.cloudfront.net/playerimages/mlb/300x300/119297.png",
+      "position": "CF"
+     },
+     "leaderPropBet": {
+      "__typename": "PropsForAGame",
+      "playerPropsForGame": [
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244076&selectionId=47989104",
+        "playerOdd": "-300"
+       }
+      ],
+      "propName": "To Record A Hit"
+     },
+     "statLabel": "Batting Average",
+     "statValue": 0.272
+    },
+    "homeRuns": {
+     "__typename": "MlbTeamLeaderStatWithBet_Integer",
+     "leader": {
+      "__typename": "MlbTeamPlayer",
+      "name": "Ketel Marte",
+      "playerImageUrl": "https://d17odppiik753x.cloudfront.net/playerimages/mlb/300x300/21853.png",
+      "position": "2B"
+     },
+     "leaderPropBet": {
+      "__typename": "PropsForAGame",
+      "playerPropsForGame": [
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244072&selectionId=11280735",
+        "playerOdd": "+400"
+       }
+      ],
+      "propName": "To Hit A Home Run"
+     },
+     "statLabel": "Home Runs",
+     "statValue": 17
+    },
+    "runs": {
+     "__typename": "MlbTeamLeaderStatWithBet_Integer",
+     "leader": {
+      "__typename": "MlbTeamPlayer",
+      "name": "Corbin Carroll",
+      "playerImageUrl": "https://d17odppiik753x.cloudfront.net/playerimages/mlb/300x300/119297.png",
+      "position": "CF"
+     },
+     "leaderPropBet": {
+      "__typename": "PropsForAGame",
+      "playerPropsForGame": [
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244129&selectionId=47989104",
+        "playerOdd": "-125"
+       }
+      ],
+      "propName": "To Record A Run"
+     },
+     "statLabel": "Runs",
+     "statValue": 48
+    },
+    "runsBattedIn": {
+     "__typename": "MlbTeamLeaderStatWithBet_Integer",
+     "leader": {
+      "__typename": "MlbTeamPlayer",
+      "name": "Ketel Marte",
+      "playerImageUrl": "https://d17odppiik753x.cloudfront.net/playerimages/mlb/300x300/21853.png",
+      "position": "2B"
+     },
+     "leaderPropBet": {
+      "__typename": "PropsForAGame",
+      "playerPropsForGame": [
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244123&selectionId=11280735",
+        "playerOdd": "+120"
+       }
+      ],
+      "propName": "To Record An RBI"
+     },
+     "statLabel": "RBIs",
+     "statValue": 53
+    },
+    "strikeouts": {
+     "__typename": "MlbTeamLeaderStatWithBet_Integer",
+     "leader": {
+      "__typename": "MlbTeamPlayer",
+      "name": "Zac Gallen",
+      "playerImageUrl": "https://d17odppiik753x.cloudfront.net/playerimages/mlb/300x300/85251.png",
+      "position": "SP"
+     },
+     "leaderPropBet": {
+      "__typename": "PropsForAGame",
+      "playerPropsForGame": [
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244080&selectionId=25482164",
+        "playerLine": 3.5,
+        "playerOdd": "-113"
+       },
+       {
+        "__typename": "PlayerOdd",
+        "betUrl": "https://account.sportsbook.fanduel.com/sportsbook/addToBetslip?marketId=42.589244080&selectionId=25482165",
+        "playerLine": 3.5,
+        "playerOdd": "-113"
+       }
+      ],
+      "propName": "Zac Gallen - Strikeouts"
+     },
+     "statLabel": "Strikeouts",
+     "statValue": 52
+    }
+   }
+  }
+ },
+ "saved_at": "2026-07-01T23:37:43.450586+00:00"
+}
