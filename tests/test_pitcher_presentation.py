@@ -46,6 +46,8 @@ def _candidate(
     projected: float = 6.8,
     score: int = 4,
     reliability: str = "HIGH",
+    projected_outs: float = 18.5,
+    projected_batters_faced: float = 24.5,
 ) -> Candidate:
     return Candidate(
         subject_name=name,
@@ -80,8 +82,8 @@ def _candidate(
         short_starts_last_10=0,
         workload_stability=0.8,
         matchup_rating=0.2,
-        projected_outs=18.5,
-        projected_batters_faced=24.5,
+        projected_outs=projected_outs,
+        projected_batters_faced=projected_batters_faced,
         projected_k_rate=0.28,
         projected_strikeouts=projected,
         score=score,
@@ -176,7 +178,15 @@ class PitcherPresentationTests(unittest.TestCase):
         self.assertNotIn("Score", str(embed))
 
     def test_core_remains_absolute_and_ranked_first(self) -> None:
-        core = _candidate("Core One", projected=7.0, score=8)
+        core = _candidate(
+            "Core One",
+            side="UNDER",
+            line=5.5,
+            projected=4.2,
+            score=8,
+            projected_outs=15.0,
+            projected_batters_faced=20.0,
+        )
         lean = _candidate("Lean Two", score=4)
 
         rows = build_pitcher_presentations(

@@ -14,7 +14,11 @@ PITCHER_MODEL_VERSION = "pitcher-k-hybrid-v2"
 
 # Tier policy is versioned separately because threshold changes can alter the
 # displayed board without changing the underlying projection.
-PITCHER_TIER_POLICY_VERSION = "core-lean-watch-v1"
+# core-lean-watch-v2: Core requires the UNDER side, caps projection edge at 1.5,
+# and requires market support (side no-vig probability >= 0.55) when both-side
+# prices are available. Evidence: combined Aug 5-30 Core 2-13 (15.4%),
+# 2.0+ edge hit 16.7%, OVER 48.6% vs UNDER 59.8%.
+PITCHER_TIER_POLICY_VERSION = "core-lean-watch-v2"
 
 # Shadow features are collected for research and may supply a display-only
 # opportunity-reliability label. They do not affect projections, scores, or tiers.
