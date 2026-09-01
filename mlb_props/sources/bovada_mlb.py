@@ -4,7 +4,9 @@ Same endpoint family proven in nfl_props / tennis_props / golf_props. The
 coupon carries moneyline, point spread (run line), and game total in one
 fetch with both-side American prices. Fail-open: on fetch failure the last
 good cached payload is reused so a transient outage produces a stale-but-
-diagnosed run instead of a silent empty one.
+diagnosed run instead of a silent empty one. Bovada also answers HTTP 200
+with `{}` when nothing is listed; that is a fresh empty coupon, not a fetch
+failure, and an object wrapping the usual group list is unwrapped.
 
 Observation-only: these lines feed game-market shadow collection and are
 never used for EV or staking claims.
@@ -131,6 +133,38 @@ def _fetch_once(url: str) -> tuple[str, int]:
         return text, status
 
 
+def _find_coupon_list(obj: dict) -> list | None:
+    """Locate the usual list of league groups inside a wrapper object."""
+    for value in obj.values():
+        if isinstance(value, list) and all(isinstance(item, dict) and "events" in item for item in value):
+            return value
+        if isinstance(value, dict):
+            nested = _find_coupon_list(value)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _normalize_coupon(parsed: Any) -> list:
+    """Return the coupon as the usual list of league groups.
+
+    Bovada sometimes answers HTTP 200 with an object instead of the list:
+    `{}` means no events are listed (a genuinely empty coupon), and an
+    object wrapping the usual list is unwrapped. Any other shape stays an
+    unexpected payload so the fail-open path can still fire.
+    """
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        if not parsed:
+            return []
+        coupon = _find_coupon_list(parsed)
+        if coupon is not None:
+            return coupon
+        raise ValueError("unexpected payload: object without a coupon events list")
+    raise ValueError(f"unexpected payload type {type(parsed).__name__}")
+
+
 def fetch_mlb_payload(cache_dir: Path, refresh: bool = True) -> FetchResult:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "bovada_mlb.json"
@@ -147,10 +181,9 @@ def fetch_mlb_payload(cache_dir: Path, refresh: bool = True) -> FetchResult:
         try:
             text, status = _fetch_once(BOVADA_MLB_URL)
             parsed = json.loads(text)
-            if not isinstance(parsed, list):
-                raise ValueError(f"unexpected payload type {type(parsed).__name__}")
-            cache_path.write_text(text)
-            return FetchResult(parsed, "fresh", attempts, status, len(text.encode("utf-8")), _now_iso(), 0.0)
+            coupon = _normalize_coupon(parsed)
+            cache_path.write_text(text if coupon is parsed else json.dumps(coupon))
+            return FetchResult(coupon, "fresh", attempts, status, len(text.encode("utf-8")), _now_iso(), 0.0)
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
             last_error = exc
             if isinstance(exc, HTTPError) and exc.code != 429 and exc.code < 500:

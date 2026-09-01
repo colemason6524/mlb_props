@@ -5,11 +5,13 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from mlb_props.sources.bovada_mlb import (
     BovadaGame,
     fetch_game_markets,
+    fetch_mlb_payload,
     normalize_team_name,
     parse_games,
 )
@@ -115,6 +117,105 @@ class ParseGamesTests(unittest.TestCase):
         ]
         games, _ = parse_games([{"events": [event]}])
         self.assertNotIn("spread", games[0].markets)
+
+
+class FetchMlbPayloadTests(unittest.TestCase):
+    """HTTP 200 `{}` is a fresh empty coupon, not a fetch failure."""
+
+    def _fetch_returning(self, text: str):
+        return patch("mlb_props.sources.bovada_mlb._fetch_once", return_value=(text, 200))
+
+    def _cached_group(self, cache_dir: Path) -> list:
+        cached = [{"events": [_event()]}]
+        (cache_dir / "bovada_mlb.json").write_text(json.dumps(cached))
+        return cached
+
+    def test_empty_dict_is_fresh_empty_coupon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            with self._fetch_returning("{}") as mock_fetch:
+                result = fetch_mlb_payload(cache_dir)
+            mock_fetch.assert_called_once()
+            cached_text = (cache_dir / "bovada_mlb.json").read_text()
+        self.assertEqual(result.payload, [])
+        self.assertEqual(json.loads(cached_text), [])
+        self.assertEqual(result.mode, "fresh")
+        self.assertIsNone(result.error)
+        self.assertEqual(result.http_status, 200)
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual(result.response_bytes, 2)
+
+    def test_empty_dict_does_not_fail_open_onto_stale_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            self._cached_group(cache_dir)
+            with self._fetch_returning("{}") as mock_fetch, patch(
+                "mlb_props.sources.bovada_mlb.time.sleep"
+            ) as mock_sleep:
+                result = fetch_mlb_payload(cache_dir)
+            mock_fetch.assert_called_once()
+            mock_sleep.assert_not_called()
+        self.assertEqual(result.mode, "fresh")
+        self.assertEqual(result.payload, [])
+        self.assertIsNone(result.error)
+
+    def test_empty_dict_coupon_round_trips_through_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            with self._fetch_returning("{}"):
+                fetch_mlb_payload(cache_dir)
+            result = fetch_mlb_payload(cache_dir, refresh=False)
+        self.assertEqual(result.mode, "cache")
+        self.assertEqual(result.payload, [])
+
+    def test_dict_wrapping_usual_list_is_unwrapped(self) -> None:
+        group = {"events": [_event()]}
+        wrappers = [
+            {"data": [group]},
+            {"result": {"data": [group]}},
+            {"meta": {"count": 1}, "coupon": [group]},
+        ]
+        for wrapper in wrappers:
+            with self.subTest(wrapper=list(wrapper)):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with self._fetch_returning(json.dumps(wrapper)):
+                        result = fetch_mlb_payload(Path(tmp))
+                    cached_text = (Path(tmp) / "bovada_mlb.json").read_text()
+                self.assertEqual(result.mode, "fresh")
+                self.assertIsNone(result.error)
+                self.assertEqual(result.payload, [group])
+                self.assertEqual(json.loads(cached_text), [group])
+                games, _ = parse_games(result.payload)
+                self.assertEqual((games[0].away_abbr, games[0].home_abbr), ("NYY", "BOS"))
+
+    def test_dict_wrapping_empty_list_is_fresh_empty_coupon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._fetch_returning('{"data": []}'):
+                result = fetch_mlb_payload(Path(tmp))
+        self.assertEqual(result.mode, "fresh")
+        self.assertEqual(result.payload, [])
+        self.assertIsNone(result.error)
+
+    def test_dict_without_coupon_list_fails_open_to_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp)
+            cached = self._cached_group(cache_dir)
+            with self._fetch_returning('{"error": "boom"}'), patch(
+                "mlb_props.sources.bovada_mlb.time.sleep"
+            ) as mock_sleep:
+                result = fetch_mlb_payload(cache_dir)
+            mock_sleep.assert_called_once()
+        self.assertEqual(result.mode, "cache")
+        self.assertEqual(result.payload, cached)
+        self.assertEqual(result.attempts, 2)
+        self.assertIn("unexpected payload", str(result.error))
+
+    def test_unexpected_payload_type_without_cache_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._fetch_returning("null"), patch("mlb_props.sources.bovada_mlb.time.sleep"):
+                with self.assertRaises(RuntimeError) as ctx:
+                    fetch_mlb_payload(Path(tmp))
+        self.assertIn("unexpected payload type NoneType", str(ctx.exception))
 
 
 class FetchGameMarketsTests(unittest.TestCase):
