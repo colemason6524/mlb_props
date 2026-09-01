@@ -2,7 +2,9 @@ from __future__ import annotations
 
 
 # Increment the schema version when the shape of exported pitcher history changes.
-PITCHER_HISTORY_SCHEMA_VERSION = 7
+# Schema 8 (2026-08-31) is additive: exports gain a `daily_card` array and a
+# `daily_card_policy_version` string. Nothing existing is renamed or removed.
+PITCHER_HISTORY_SCHEMA_VERSION = 8
 
 # Increment the model version only when projection inputs, formulas, or scoring
 # behavior change. pitcher-k-hybrid-v2 activates the recency-shadow aggregate
@@ -46,6 +48,15 @@ PITCHER_FORECAST_BOARD_VERSION = "forecast-board-v1"
 # The price shadow captures both-side sportsbook prices when a source exposes
 # them. It is observation-only and never used for EV or staking claims.
 PITCHER_PRICE_SHADOW_VERSION = "price-shadow-v1"
+
+# The Daily Card is a pre-registered segment policy, not a Core/Lean/Watch tier.
+# Gates frozen 2026-08-31 from the graded Aug 5-29 sample (n=97, 61.9% hit,
+# stable 61.8%/61.9% across both windows): PITCHER_STRIKEOUTS, UNDER side,
+# line <= 5.5, |projected Ks - line| <= 1.0, ranked by calibrated confidence,
+# capped at 4. The no-vig market-support gate is deferred to a v2 policy once
+# price history accumulates. Success rule for September: trust at >= 55% with
+# n >= 100; marginal at 52.4-55%; kill below 52.4%.
+PITCHER_DAILY_CARD_POLICY_VERSION = "daily-unders-card-v1"
 
 # Game-level market shadow collection (moneyline / run line / game total).
 # History shape changes bump the schema version; the market baseline is an

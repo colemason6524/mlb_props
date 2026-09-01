@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from .daily_card import DAILY_CARD_LIMIT, DailyCardPlay
 from .hot_hits_policy import (
     CORE_FIRST_POLICY_VERSION,
     HOT_HITS_POLICY_VERSION,
@@ -19,6 +20,7 @@ from .pitcher_presentation import (
     opportunity_reliability,
 )
 from .tiers import side_projection_edge
+from .version import PITCHER_DAILY_CARD_POLICY_VERSION
 
 
 FLAG_LABELS = {
@@ -256,6 +258,33 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
     return "\n".join(output)
 
 
+def render_daily_card(card: list[DailyCardPlay]) -> str:
+    """Render the pre-registered Daily Unders Card section for the terminal board."""
+    lines = [
+        f"Daily Card (research; pre-registered {PITCHER_DAILY_CARD_POLICY_VERSION}; not Core):"
+    ]
+    if not card:
+        lines.append(
+            "  No Daily Card plays today (gates: UNDER, line<=5.5, |proj-line|<=1.0). "
+            "Zero-pick days are reported honestly; the card is never padded."
+        )
+        return "\n".join(lines)
+    for play in card:
+        item = play.candidate
+        estimate = item.confidence_estimate
+        confidence = f"{estimate.confidence_percentage}% {estimate.label.title()}" if estimate else "-"
+        lines.append(
+            f"  #{play.card_rank} {item.subject_name} ({item.team} vs {item.opponent}) "
+            f"UNDER {item.line:.1f} | proj {item.projected_strikeouts:.1f} "
+            f"(edge {play.side_edge:+.2f}) | conf {confidence} | work rel {opportunity_reliability(item)}"
+        )
+    lines.append(
+        "  Daily Card is a pre-registered segment policy graded against the "
+        "always-under baseline; it is separate from Core/Lean/Watch tiers."
+    )
+    return "\n".join(lines)
+
+
 def render_pitcher_props_discord_embeds(
     candidates: Iterable[Candidate],
     screen_date,
@@ -267,6 +296,7 @@ def render_pitcher_props_discord_embeds(
     watch_min_score: int,
     core_limit: int = 5,
     watch_limit: int = 5,
+    daily_card: list[DailyCardPlay] | None = None,
 ) -> list[dict]:
     presentations = build_pitcher_presentations(
         candidates,
@@ -361,7 +391,39 @@ def render_pitcher_props_discord_embeds(
                 }
             )
 
+    embed["fields"].append(_daily_card_embed_field(daily_card))
+
     return [embed]
+
+
+def _daily_card_embed_field(daily_card: list[DailyCardPlay] | None) -> dict:
+    card = daily_card or []
+    if not card:
+        value = (
+            f"No Daily Card plays today. Pre-registered gates: UNDER, line <=5.5, "
+            f"|proj-line| <=1.0; zero-pick days are reported honestly and the card is never padded."
+        )
+    else:
+        rows = []
+        for play in card:
+            item = play.candidate
+            estimate = item.confidence_estimate
+            confidence = (
+                f"{estimate.confidence_percentage}%"
+                if estimate is not None
+                else "-"
+            )
+            rows.append(
+                f"#{play.card_rank} **{item.subject_name}** ({item.team}) "
+                f"UNDER {item.line:.1f} - proj `{item.projected_strikeouts:.1f}`, "
+                f"edge `{play.side_edge:+.2f}`, conf `{confidence}`"
+            )
+        value = "\n".join(rows)
+    return {
+        "name": f"Daily Card (research; {PITCHER_DAILY_CARD_POLICY_VERSION}; not Core)",
+        "value": value,
+        "inline": False,
+    }
 
 
 def _pitcher_prop_embed_value(presentation: PitcherPresentation) -> str:

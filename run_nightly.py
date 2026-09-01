@@ -9,9 +9,11 @@ from pathlib import Path
 
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
+from mlb_props.daily_card import build_daily_card, daily_card_payload, daily_card_policy_payload
 from mlb_props.notifiers.discord import send_discord_embeds
 from mlb_props.output import (
     render_candidates,
+    render_daily_card,
     render_pitcher_props_discord_embeds,
     render_starter_board,
 )
@@ -28,6 +30,7 @@ from mlb_props.sources.scrape import MlbScrapeSource
 from mlb_props.sources.sample import SamplePitcherLogsSource, SamplePitcherPropsSource, SampleSlateSource
 from mlb_props.tiers import candidate_tier
 from mlb_props.version import (
+    PITCHER_DAILY_CARD_POLICY_VERSION,
     PITCHER_DISPLAY_POLICY_VERSION,
     PITCHER_CONFIDENCE_MODEL_VERSION,
     PITCHER_FORECAST_BOARD_VERSION,
@@ -363,6 +366,9 @@ def _run() -> int:
     print("")
     print(render_starter_board(starter_board, limit=settings.display_limit))
     print("")
+    daily_card = build_daily_card(result.candidates)
+    print(render_daily_card(daily_card))
+    print("")
     snapshot_path = None
     if settings.data_mode == "live":
         snapshot_path = maybe_export_live_scrape_snapshot(
@@ -409,6 +415,7 @@ def _run() -> int:
             watch_min_score=watch_min_score(active_screen_settings),
             core_limit=pitcher_props_discord_core_limit(),
             watch_limit=pitcher_props_discord_watch_limit(),
+            daily_card=daily_card,
         )
         discord_result = send_discord_embeds(discord_webhook_url(), embeds)
         discord_delivery.update(
@@ -450,6 +457,9 @@ def _run() -> int:
                 "display_policy_version": PITCHER_DISPLAY_POLICY_VERSION,
                 "forecast_board_version": PITCHER_FORECAST_BOARD_VERSION,
                 "price_shadow_version": PITCHER_PRICE_SHADOW_VERSION,
+                "daily_card_policy_version": PITCHER_DAILY_CARD_POLICY_VERSION,
+                "daily_card_policy": daily_card_policy_payload(),
+                "daily_card": daily_card_payload(daily_card),
                 "screen_date": settings.screen_date.isoformat(),
                 "exported_at": datetime.now(timezone.utc).isoformat(),
                 "settings": sanitized_settings_payload(settings),

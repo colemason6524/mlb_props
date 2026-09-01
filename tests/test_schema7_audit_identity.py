@@ -113,8 +113,9 @@ class CandidateAuditIdentityTests(unittest.TestCase):
 
 
 class SchemaVersionTests(unittest.TestCase):
-    def test_schema_version_is_seven(self) -> None:
-        self.assertEqual(PITCHER_HISTORY_SCHEMA_VERSION, 7)
+    def test_schema_version_is_eight(self) -> None:
+        # Schema 8 (2026-08-31) is additive: daily_card array + policy version.
+        self.assertEqual(PITCHER_HISTORY_SCHEMA_VERSION, 8)
 
 
 class ForecastBoardTests(unittest.TestCase):
