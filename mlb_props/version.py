@@ -5,9 +5,12 @@ from __future__ import annotations
 PITCHER_HISTORY_SCHEMA_VERSION = 7
 
 # Increment the model version only when projection inputs, formulas, or scoring
-# behavior change. This version names the situational model that existed before
-# the opportunity-model rebuild began.
-PITCHER_MODEL_VERSION = "pitcher-k-situational-v1"
+# behavior change. pitcher-k-hybrid-v2 activates the recency-shadow aggregate
+# K/BF blend (50% season, 30% L10, 20% L5) as the production K-rate while
+# keeping the situational opportunity projection for outs and batters faced.
+# Validation: graded schema-6 sample, shadow K MAE 1.89 vs active 1.95,
+# date-blocked bootstrap P(shadow worse) = 0.4%.
+PITCHER_MODEL_VERSION = "pitcher-k-hybrid-v2"
 
 # Tier policy is versioned separately because threshold changes can alter the
 # displayed board without changing the underlying projection.

@@ -18,13 +18,10 @@ def _aggregate_rate(
     return numerator_total / denominator_total
 
 
-def build_recency_projection_shadow(
+def _recency_k_rate_components(
     logs: list[PitcherGameLog],
     screen_date: date,
-    matchup_context: MatchupContext | None,
-    active_projected_outs: float,
-) -> RecencyProjectionShadow:
-    """Build a leakage-safe, research-only alternative strikeout projection."""
+) -> tuple[list[PitcherGameLog], list[PitcherGameLog], list[PitcherGameLog], float, float, float, float]:
     starts = sorted(
         (
             log
@@ -41,9 +38,16 @@ def build_recency_projection_shadow(
     k_rate_last_10 = _aggregate_rate(last_10, "strikeouts", "batters_faced")
     k_rate_last_5 = _aggregate_rate(last_5, "strikeouts", "batters_faced")
     walk_rate_last_10 = _aggregate_rate(last_10, "walks", "batters_faced")
-    season_bf_per_out = _aggregate_rate(starts, "batters_faced", "outs_recorded")
-    bf_per_out_last_5 = _aggregate_rate(last_5, "batters_faced", "outs_recorded")
+    return starts, last_10, last_5, season_k_rate, k_rate_last_10, k_rate_last_5, walk_rate_last_10
 
+
+def _adjusted_k_rate(
+    season_k_rate: float,
+    k_rate_last_10: float,
+    k_rate_last_5: float,
+    walk_rate_last_10: float,
+    matchup_context: MatchupContext | None,
+) -> float:
     projected_k_rate = (
         (season_k_rate * 0.50)
         + (k_rate_last_10 * 0.30)
@@ -57,7 +61,67 @@ def build_recency_projection_shadow(
             projected_k_rate += 0.005
     if walk_rate_last_10 >= 0.09:
         projected_k_rate -= 0.006
-    projected_k_rate = min(max(projected_k_rate, 0.08), 0.42)
+    return min(max(projected_k_rate, 0.08), 0.42)
+
+
+def blended_recency_k_rate(
+    logs: list[PitcherGameLog],
+    screen_date: date,
+    matchup_context: MatchupContext | None,
+) -> float:
+    """Aggregate K/BF blend (50% season, 30% L10, 20% L5) with matchup context.
+
+    This is the recency-shadow K-rate that out-projected the active per-game-rate
+    blend in the graded schema-6 sample (lower MAE and bias; date-blocked
+    bootstrap P(worse) = 0.4%). It uses only starts strictly before screen_date.
+    """
+    (
+        _starts,
+        _last_10,
+        _last_5,
+        season_k_rate,
+        k_rate_last_10,
+        k_rate_last_5,
+        walk_rate_last_10,
+    ) = _recency_k_rate_components(logs, screen_date)
+    return round(
+        _adjusted_k_rate(
+            season_k_rate=season_k_rate,
+            k_rate_last_10=k_rate_last_10,
+            k_rate_last_5=k_rate_last_5,
+            walk_rate_last_10=walk_rate_last_10,
+            matchup_context=matchup_context,
+        ),
+        3,
+    )
+
+
+def build_recency_projection_shadow(
+    logs: list[PitcherGameLog],
+    screen_date: date,
+    matchup_context: MatchupContext | None,
+    active_projected_outs: float,
+) -> RecencyProjectionShadow:
+    """Build a leakage-safe, research-only alternative strikeout projection."""
+    (
+        starts,
+        last_10,
+        last_5,
+        season_k_rate,
+        k_rate_last_10,
+        k_rate_last_5,
+        walk_rate_last_10,
+    ) = _recency_k_rate_components(logs, screen_date)
+    season_bf_per_out = _aggregate_rate(starts, "batters_faced", "outs_recorded")
+    bf_per_out_last_5 = _aggregate_rate(last_5, "batters_faced", "outs_recorded")
+
+    projected_k_rate = _adjusted_k_rate(
+        season_k_rate=season_k_rate,
+        k_rate_last_10=k_rate_last_10,
+        k_rate_last_5=k_rate_last_5,
+        walk_rate_last_10=walk_rate_last_10,
+        matchup_context=matchup_context,
+    )
 
     blended_bf_per_out = (bf_per_out_last_5 * 0.60) + (season_bf_per_out * 0.40)
     projected_bf = min(

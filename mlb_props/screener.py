@@ -22,7 +22,7 @@ from .models import (
 from .opportunity import build_opportunity_shadow
 from .pitcher_confidence import estimate_pitcher_confidence
 from .price_shadow import no_vig_probabilities, raw_implied_probabilities
-from .recency_shadow import build_recency_projection_shadow
+from .recency_shadow import blended_recency_k_rate, build_recency_projection_shadow
 from .tiers import core_block_reasons
 from .utils import normalize_name
 
@@ -122,11 +122,10 @@ def screen_pitcher_props(
             short_starts_recent=sum(1 for log in last_5 if log.outs_recorded < 15),
             outs_stability=_workload_stability(last_5, PROP_DEFINITIONS[PITCHER_OUTS_RECORDED]),
         )
-        projected_k_rate = _project_k_rate(
-            logs=logs,
-            matchup_context=matchup_context,
-            avg_k_rate_last_5=avg_k_rate_last_5,
-            avg_walk_rate_last_5=avg_walk_rate_last_5,
+        projected_k_rate = blended_recency_k_rate(
+            raw_logs,
+            line.game_date,
+            matchup_context,
         )
         projected_strikeouts = round(projected_batters_faced * projected_k_rate, 1)
         recency_shadow = build_recency_projection_shadow(
@@ -938,28 +937,6 @@ def _project_opportunity(
     return projected_outs, projected_batters_faced
 
 
-def _project_k_rate(
-    logs: list[PitcherGameLog],
-    matchup_context: MatchupContext | None,
-    avg_k_rate_last_5: float,
-    avg_walk_rate_last_5: float,
-) -> float:
-    avg_k_rate_season = mean(log.strikeouts / max(log.batters_faced, 1) for log in logs)
-    projected_k_rate = (avg_k_rate_last_5 * 0.6) + (avg_k_rate_season * 0.4)
-
-    if matchup_context is not None:
-        projected_k_rate += (matchup_context.opponent_k_rate_vs_hand - 0.22) * 0.6
-        if matchup_context.opponent_walk_rate_vs_hand >= 0.09:
-            projected_k_rate -= 0.008
-        elif matchup_context.opponent_walk_rate_vs_hand <= 0.075:
-            projected_k_rate += 0.005
-
-    if avg_walk_rate_last_5 >= 0.09:
-        projected_k_rate -= 0.006
-
-    return round(min(max(projected_k_rate, 0.08), 0.42), 3)
-
-
 def _matchup_rating(prop_type: str, matchup_context: MatchupContext | None) -> float:
     if matchup_context is None:
         return 0.0
@@ -1082,11 +1059,10 @@ def build_daily_starter_board(
                 short_starts_recent=short_starts_recent,
                 outs_stability=outs_stability,
             )
-            projected_k_rate = _project_k_rate(
-                logs=logs,
-                matchup_context=matchup_context,
-                avg_k_rate_last_5=avg_k_rate_last_5,
-                avg_walk_rate_last_5=avg_walk_rate_last_5,
+            projected_k_rate = blended_recency_k_rate(
+                raw_logs,
+                game.game_date,
+                matchup_context,
             )
             projected_strikeouts = round(projected_batters_faced * projected_k_rate, 1)
             strikeout_line = strikeout_lines.get((team, pitcher_key))
