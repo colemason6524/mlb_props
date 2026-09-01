@@ -125,6 +125,8 @@ class GradedHistory:
     entries: list[ManifestEntry]
     candidates: list[GradedCandidate]
     integrity_errors: list[str] = field(default_factory=list)
+    daily_card: list[GradedCandidate] = field(default_factory=list)
+    daily_card_policy_version: str | None = None
 
 
 def _file_hash(path: Path) -> str:
@@ -167,6 +169,89 @@ def _candidate_rows(payload: dict) -> list[dict]:
     if isinstance(rows, list):
         return [row for row in rows if isinstance(row, dict)]
     return []
+
+
+def _daily_card_rows(payload: dict) -> list[dict]:
+    rows = payload.get("daily_card")
+    if isinstance(rows, list):
+        return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _graded_candidate_from_row(
+    row: dict,
+    *,
+    screen_date: date,
+    file_name: str,
+    tier: str,
+) -> GradedCandidate:
+    confidence = _confidence_from_candidate(row)
+    recency = _recency_shadow_from_candidate(row)
+    opportunity = _opportunity_shadow_from_candidate(row)
+    recency_confidence = recency.get("confidence_estimate")
+    if not isinstance(recency_confidence, dict):
+        recency_confidence = {}
+    return GradedCandidate(
+        screen_date=screen_date,
+        file_name=file_name,
+        subject_id=_safe_int(row.get("subject_id")),
+        pitcher_name=str(row.get("subject_name") or "unknown"),
+        team=str(row.get("team") or ""),
+        opponent=str(row.get("opponent") or ""),
+        prop_type=str(row.get("prop_type") or ""),
+        side=str(row.get("side") or ""),
+        line=_safe_float(row.get("line"), 0.0) or 0.0,
+        bookmaker=str(row.get("bookmaker") or ""),
+        tier=tier,
+        qualified=True,
+        projected_outs=_safe_float(row.get("projected_outs")),
+        projected_batters_faced=_safe_float(row.get("projected_batters_faced")),
+        projected_k_rate=_safe_float(row.get("projected_k_rate")),
+        projected_strikeouts=_safe_float(row.get("projected_strikeouts")),
+        score=_safe_int(row.get("score"), 0) or 0,
+        flags=list(row.get("flags") or []),
+        hits_last_5=_safe_int(row.get("hits_last_5"), 0) or 0,
+        played_last_5=_safe_int(row.get("played_last_5"), 0) or 0,
+        opportunity_confidence=str(opportunity.get("opportunity_confidence") or "")
+        if opportunity.get("opportunity_confidence")
+        else None,
+        opportunity_flags=list(opportunity.get("flags") or []),
+        shadow_projected_outs=_safe_float(opportunity.get("shadow_projected_outs")),
+        shadow_projected_batters_faced=_safe_float(
+            opportunity.get("shadow_projected_batters_faced")
+        ),
+        shadow_pitch_budget=_safe_float(opportunity.get("shadow_pitch_budget")),
+        confidence_percentage=_safe_int(confidence.get("confidence_percentage")),
+        provisional_win_probability=_safe_float(confidence.get("win_probability")),
+        confidence_label=str(confidence.get("label") or "")
+        if confidence.get("label")
+        else None,
+        recency_shadow_projected_k_rate=_safe_float(
+            recency.get("shadow_projected_k_rate")
+        ),
+        recency_shadow_projected_strikeouts=_safe_float(
+            recency.get("shadow_projected_strikeouts")
+        ),
+        recency_shadow_projected_batters_faced=_safe_float(
+            recency.get("shadow_projected_batters_faced")
+        ),
+        recency_shadow_projected_outs=_safe_float(
+            recency.get("shadow_projected_outs")
+        ),
+        recency_shadow_projection_edge=_safe_float(
+            recency.get("shadow_projection_edge")
+        ),
+        recency_shadow_win_probability=_safe_float(
+            recency_confidence.get("win_probability")
+        ),
+        recency_shadow_confidence_percentage=_safe_int(
+            recency_confidence.get("confidence_percentage")
+        ),
+        event_id=str(row.get("event_id") or "") or None,
+        line_source=str(row.get("line_source") or "") or None,
+        line_collected_at=str(row.get("line_collected_at") or "") or None,
+        price_shadow=row.get("price_shadow") if isinstance(row.get("price_shadow"), dict) else None,
+    )
 
 
 def _confidence_from_candidate(candidate: dict) -> dict:
@@ -258,7 +343,9 @@ def _safe_int(value, default: int | None = None) -> int | None:
 def load_history(history_dir: Path, schema_version: int) -> GradedHistory:
     entries: list[ManifestEntry] = []
     candidates: list[GradedCandidate] = []
+    daily_card: list[GradedCandidate] = []
     integrity_errors: list[str] = []
+    policy_version: str | None = None
     files = sorted(history_dir.glob("pitcher_props_*.json"))
 
     for path in files:
@@ -351,80 +438,39 @@ def load_history(history_dir: Path, schema_version: int) -> GradedHistory:
                 if key in keys:
                     tier = candidate_tier
                     break
-            confidence = _confidence_from_candidate(row)
-            recency = _recency_shadow_from_candidate(row)
-            opportunity = _opportunity_shadow_from_candidate(row)
-            recency_confidence = recency.get("confidence_estimate")
-            if not isinstance(recency_confidence, dict):
-                recency_confidence = {}
             candidates.append(
-                GradedCandidate(
+                _graded_candidate_from_row(
+                    row,
                     screen_date=screen_date,
                     file_name=path.name,
-                    subject_id=_safe_int(row.get("subject_id")),
-                    pitcher_name=str(row.get("subject_name") or "unknown"),
-                    team=str(row.get("team") or ""),
-                    opponent=str(row.get("opponent") or ""),
-                    prop_type=str(row.get("prop_type") or ""),
-                    side=str(row.get("side") or ""),
-                    line=_safe_float(row.get("line"), 0.0) or 0.0,
-                    bookmaker=str(row.get("bookmaker") or ""),
                     tier=tier,
-                    qualified=True,
-                    projected_outs=_safe_float(row.get("projected_outs")),
-                    projected_batters_faced=_safe_float(row.get("projected_batters_faced")),
-                    projected_k_rate=_safe_float(row.get("projected_k_rate")),
-                    projected_strikeouts=_safe_float(row.get("projected_strikeouts")),
-                    score=_safe_int(row.get("score"), 0) or 0,
-                    flags=list(row.get("flags") or []),
-                    hits_last_5=_safe_int(row.get("hits_last_5"), 0) or 0,
-                    played_last_5=_safe_int(row.get("played_last_5"), 0) or 0,
-                    opportunity_confidence=str(opportunity.get("opportunity_confidence") or "")
-                    if opportunity.get("opportunity_confidence")
-                    else None,
-                    opportunity_flags=list(opportunity.get("flags") or []),
-                    shadow_projected_outs=_safe_float(opportunity.get("shadow_projected_outs")),
-                    shadow_projected_batters_faced=_safe_float(
-                        opportunity.get("shadow_projected_batters_faced")
-                    ),
-                    shadow_pitch_budget=_safe_float(opportunity.get("shadow_pitch_budget")),
-                    confidence_percentage=_safe_int(confidence.get("confidence_percentage")),
-                    provisional_win_probability=_safe_float(confidence.get("win_probability")),
-                    confidence_label=str(confidence.get("label") or "")
-                    if confidence.get("label")
-                    else None,
-                    recency_shadow_projected_k_rate=_safe_float(
-                        recency.get("shadow_projected_k_rate")
-                    ),
-                    recency_shadow_projected_strikeouts=_safe_float(
-                        recency.get("shadow_projected_strikeouts")
-                    ),
-                    recency_shadow_projected_batters_faced=_safe_float(
-                        recency.get("shadow_projected_batters_faced")
-                    ),
-                    recency_shadow_projected_outs=_safe_float(
-                        recency.get("shadow_projected_outs")
-                    ),
-                    recency_shadow_projection_edge=_safe_float(
-                        recency.get("shadow_projection_edge")
-                    ),
-                    recency_shadow_win_probability=_safe_float(
-                        recency_confidence.get("win_probability")
-                    ),
-                    recency_shadow_confidence_percentage=_safe_int(
-                        recency_confidence.get("confidence_percentage")
-                    ),
-                    event_id=str(row.get("event_id") or "") or None,
-                    line_source=str(row.get("line_source") or "") or None,
-                    line_collected_at=str(row.get("line_collected_at") or "") or None,
-                    price_shadow=row.get("price_shadow") if isinstance(row.get("price_shadow"), dict) else None,
                 )
             )
+        for row in _daily_card_rows(payload):
+            if row.get("prop_type") != PITCHER_STRIKEOUTS:
+                continue
+            daily_card.append(
+                _graded_candidate_from_row(
+                    row,
+                    screen_date=screen_date,
+                    file_name=path.name,
+                    tier="daily_card",
+                )
+            )
+        card_version = payload.get("daily_card_policy_version")
+        if isinstance(card_version, str) and card_version:
+            policy_version = card_version
         entries.append(entry)
 
     entries.sort(key=lambda entry: entry.screen_date)
     candidates.sort(key=lambda candidate: (candidate.screen_date, candidate.pitcher_name))
-    return GradedHistory(entries=entries, candidates=candidates, integrity_errors=integrity_errors)
+    return GradedHistory(
+        entries=entries,
+        candidates=candidates,
+        integrity_errors=integrity_errors,
+        daily_card=daily_card,
+        daily_card_policy_version=policy_version,
+    )
 
 
 def earliest_first_pitch(
@@ -898,6 +944,57 @@ def price_shadow_analysis(rows: list[GradedCandidate]) -> dict:
         "price_against_side": against,
         "flagged_rows": supports + against,
         "unpriced_rows": sum(1 for row in rows if not row.price_shadow),
+    }
+
+
+def units_at_minus_110(wins: int, losses: int) -> float:
+    """Flat 1-unit profit at -110 prices: win +100/110, loss -1."""
+    return wins * (100 / 110) - losses
+
+
+def daily_card_summary(history: GradedHistory) -> dict:
+    """Summarize graded Daily Card rows against the always-under candidate baseline.
+
+    The card rows must already be resolved (outcome set by resolve_candidates).
+    The baseline is every resolved UNDER-side candidate from the same snapshots,
+    regardless of line or edge, because the pre-registered success rule asks
+    whether the card's segment gates beat simply taking unders.
+    """
+    card_rows = history.daily_card
+    graded = [row for row in card_rows if row.outcome in ("win", "loss")]
+    wins = sum(1 for row in graded if row.outcome == "win")
+    losses = len(graded) - wins
+
+    card_file_names = {row.file_name for row in card_rows}
+    baseline_rows = [
+        row
+        for row in history.candidates
+        if row.side == "UNDER"
+        and row.file_name in card_file_names
+        and row.outcome in ("win", "loss")
+    ]
+    baseline_wins = sum(1 for row in baseline_rows if row.outcome == "win")
+
+    return {
+        "card_rows": len(card_rows),
+        "graded": len(graded),
+        "wins": wins,
+        "losses": losses,
+        "pushes": sum(1 for row in card_rows if row.outcome == "push"),
+        "voids": sum(1 for row in card_rows if row.outcome == "void_no_start"),
+        "pending": sum(1 for row in card_rows if row.outcome == "pending"),
+        "unresolved": sum(
+            1
+            for row in card_rows
+            if row.outcome not in ("win", "loss", "push", "void_no_start", "pending")
+        ),
+        "hit_rate": (wins / len(graded)) if graded else None,
+        "units_at_minus_110": units_at_minus_110(wins, losses) if graded else None,
+        "baseline_rows": len(baseline_rows),
+        "baseline_hit_rate": (baseline_wins / len(baseline_rows)) if baseline_rows else None,
+        "policy_version": str(
+            getattr(history, "daily_card_policy_version", "") or "unknown"
+        ),
     }
 
 

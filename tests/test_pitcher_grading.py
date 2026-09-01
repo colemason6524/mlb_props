@@ -13,6 +13,7 @@ from mlb_props.pitcher_grading import (
     _l5_band,
     active_vs_shadow_metrics,
     brier_and_calibration,
+    daily_card_summary,
     disagreement_analysis,
     load_history,
     resolve_candidates,
@@ -689,6 +690,108 @@ class Schema7StrictGradingTests(unittest.TestCase):
             candidate = history.candidates[0]
             self.assertEqual(candidate.game_pk, 824158)
             self.assertEqual(candidate.outcome, "loss")
+
+
+class DailyCardGradingTests(unittest.TestCase):
+    def _schema8_payload(self) -> dict:
+        payload = json.loads(json.dumps(SCHEMA_6_PAYLOAD))
+        payload["history_schema_version"] = 8
+        payload["daily_card_policy_version"] = "daily-unders-card-v1"
+        payload["daily_card"] = [
+            {
+                "subject_name": "Card Pitcher",
+                "subject_id": 2001,
+                "subject_role": "pitcher",
+                "team": "CLE",
+                "opponent": "DET",
+                "hand": "R",
+                "prop_type": "PITCHER_STRIKEOUTS",
+                "side": "UNDER",
+                "line": 5.5,
+                "bookmaker": "fanduel",
+                "projected_outs": 15.0,
+                "projected_batters_faced": 20.0,
+                "projected_k_rate": 0.2,
+                "projected_strikeouts": 4.8,
+                "score": 3,
+                "flags": ["UNDER"],
+                "card_rank": 1,
+                "card_side_edge": 0.7,
+                "history_tier": "daily_card",
+                "confidence_estimate": {
+                    "version": "pitcher-confidence-calibrated-v2",
+                    "calibration_status": "CALIBRATED_V1",
+                    "win_probability": 0.54,
+                    "confidence_percentage": 54,
+                    "label": "Cautious",
+                    "price_included": False,
+                },
+            },
+            {
+                "subject_name": "Outs Row",
+                "subject_id": 2002,
+                "prop_type": "PITCHER_OUTS_RECORDED",
+                "side": "UNDER",
+                "line": 16.5,
+                "projected_outs": 16.0,
+                "score": 1,
+                "card_rank": 2,
+                "history_tier": "daily_card",
+            },
+        ]
+        return payload
+
+    def test_load_reads_daily_card_with_policy_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            _write_history(tmp, self._schema8_payload())
+            history = load_history(tmp, 8)
+
+            self.assertEqual(history.daily_card_policy_version, "daily-unders-card-v1")
+            self.assertEqual(len(history.daily_card), 1)
+            row = history.daily_card[0]
+            self.assertEqual(row.tier, "daily_card")
+            self.assertEqual(row.pitcher_name, "Card Pitcher")
+            self.assertEqual(row.side, "UNDER")
+            self.assertEqual(row.line, 5.5)
+            self.assertEqual(row.confidence_percentage, 54)
+
+    def test_daily_card_summary_computes_units_and_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            _write_history(tmp, self._schema8_payload())
+            history = load_history(tmp, 8)
+
+            history.daily_card[0].outcome = "win"
+            under_candidates = [row for row in history.candidates if row.side == "UNDER"]
+            self.assertTrue(under_candidates)
+            under_candidates[0].outcome = "win"
+            under_candidates[0].file_name = history.daily_card[0].file_name
+            for row in under_candidates[1:]:
+                row.outcome = "loss"
+                row.file_name = history.daily_card[0].file_name
+
+            summary = daily_card_summary(history)
+
+            self.assertEqual(summary["graded"], 1)
+            self.assertEqual(summary["wins"], 1)
+            self.assertAlmostEqual(summary["hit_rate"], 1.0)
+            self.assertAlmostEqual(summary["units_at_minus_110"], 100 / 110)
+            self.assertGreater(summary["baseline_rows"], 0)
+            self.assertIsNotNone(summary["baseline_hit_rate"])
+            self.assertEqual(summary["policy_version"], "daily-unders-card-v1")
+
+    def test_daily_card_summary_empty_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            _write_history(tmp)
+            history = load_history(tmp, 6)
+
+            summary = daily_card_summary(history)
+
+            self.assertEqual(summary["card_rows"], 0)
+            self.assertIsNone(summary["hit_rate"])
+            self.assertIsNone(summary["units_at_minus_110"])
 
 
 if __name__ == "__main__":

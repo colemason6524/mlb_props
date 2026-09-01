@@ -219,5 +219,81 @@ class RecencyShadowCompatibilityTests(unittest.TestCase):
         self.assertIn("recency-shadow K MAE 0.50", rendered)
 
 
+class DailyCardSectionTests(unittest.TestCase):
+    def _resolved(self, **overrides):
+        values = {field.name: None for field in fields(backtest.ResolvedPrediction)}
+        values.update(
+            {
+                "screen_date": date(2026, 9, 1),
+                "tier": "daily_card",
+                "pitcher_name": "Card Pitcher",
+                "team": "CLE",
+                "opponent": "DET",
+                "prop_type": "PITCHER_STRIKEOUTS",
+                "side": "UNDER",
+                "line": 5.5,
+                "score": 3,
+                "actual": 4.0,
+                "actual_outs": 15,
+                "actual_pitches": 82,
+                "actual_batters_faced": 20,
+                "projected_strikeouts": 4.8,
+                "outcome": "win",
+                "edge": -1.5,
+            }
+        )
+        values.update(overrides)
+        return backtest.ResolvedPrediction(**values)
+
+    def test_daily_card_rows_from_payload_are_marked(self) -> None:
+        rows = backtest._daily_card_rows_from_payload(
+            {"daily_card": [{"subject_name": "Card Pitcher", "card_rank": 1}]}
+        )
+
+        self.assertEqual(rows[0]["history_tier"], "daily_card")
+
+    def test_section_reports_hit_rate_and_units(self) -> None:
+        card_predictions = [{"screen_date": "2026-09-01", "subject_name": "Card Pitcher"}]
+        resolved = [
+            self._resolved(),
+            self._resolved(pitcher_name="Second Card", outcome="loss", actual=7.0, line=5.5),
+        ]
+
+        lines = backtest._render_daily_card_section(card_predictions, resolved, [], [])
+
+        text = "\n".join(lines)
+        self.assertIn("Daily Card (pre-registered research policy; not Core/Lean/Watch):", text)
+        self.assertIn("Card plays graded: 2 (1-1)", text)
+        self.assertIn("Card hit rate: 50.0%", text)
+        self.assertIn("Card flat units at -110: -0.09", text)
+        self.assertIn("Card Pitcher (CLE vs DET) UNDER 5.5 | proj 4.8 | actual 4 | win", text)
+
+    def test_section_skips_when_no_card_predictions(self) -> None:
+        self.assertEqual(backtest._render_daily_card_section([], [], [], []), [])
+
+    def test_void_and_unresolved_carry_tier_defaults(self) -> None:
+        void_kwargs = dict(
+            screen_date=date(2026, 9, 1),
+            pitcher_name="X",
+            team="A",
+            opponent="B",
+            prop_type="PITCHER_STRIKEOUTS",
+            side="UNDER",
+            line=5.5,
+        )
+        self.assertEqual(
+            backtest.VoidPrediction(reason="void_no_start", tier="daily_card", **void_kwargs).tier,
+            "daily_card",
+        )
+        self.assertEqual(
+            backtest.UnresolvedPrediction(reason="no_logs_loaded", **void_kwargs).tier,
+            "unclassified",
+        )
+        self.assertEqual(
+            backtest.UnresolvedPrediction(reason="no_logs_loaded", tier="daily_card", **void_kwargs).tier,
+            "daily_card",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

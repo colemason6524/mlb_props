@@ -4,7 +4,7 @@ import json
 import sys
 import tempfile
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from statistics import mean
@@ -97,6 +97,7 @@ class VoidPrediction:
     side: str
     line: float
     reason: str
+    tier: str = "unclassified"
 
 
 @dataclass
@@ -109,6 +110,7 @@ class UnresolvedPrediction:
     side: str
     line: float
     reason: str
+    tier: str = "unclassified"
 
 
 @dataclass
@@ -129,6 +131,8 @@ class LoadedHistory:
     selected_lean_count: int = 0
     selected_watch_count: int = 0
     selected_candidate_count: int = 0
+    card_predictions: list[dict] = field(default_factory=list)
+    selected_card_count: int = 0
 
 
 def _history_dir_from_args(args: list[str] | None = None) -> Path:
@@ -224,9 +228,16 @@ def _payload_mode_rank(mode: str | None) -> int:
     return 0
 
 
+def _daily_card_rows_from_payload(payload: dict) -> list[dict]:
+    rows = payload.get("daily_card")
+    if isinstance(rows, list):
+        return [dict(row) | {"history_tier": "daily_card"} for row in rows if isinstance(row, dict)]
+    return []
+
+
 def _load_latest_predictions() -> LoadedHistory:
-    payloads: list[tuple[datetime, str, str | None, list[dict], str]] = []
-    latest_counts_by_path: dict[str, tuple[int, int, int, int]] = {}
+    payloads: list[tuple[datetime, str, str | None, list[dict], str, list[dict]]] = []
+    latest_counts_by_path: dict[str, tuple[int, int, int, int, int]] = {}
     for path in _history_files():
         payload = json.loads(path.read_text())
         screen_date = payload.get("screen_date")
@@ -257,17 +268,36 @@ def _load_latest_predictions() -> LoadedHistory:
                     "history_schema_version": history_schema_version,
                 }
             )
+        card_candidates: list[dict] = []
+        for card_row in _daily_card_rows_from_payload(payload):
+            if card_row.get("prop_type") != PITCHER_STRIKEOUTS:
+                continue
+            team = normalize_team_abbr(card_row.get("team", ""))
+            pitcher_key = normalize_name(card_row.get("subject_name", ""))
+            subject_id = card_row.get("subject_id")
+            if subject_id is None:
+                subject_id = starter_ids.get((team, pitcher_key))
+            card_candidates.append(
+                card_row
+                | {
+                    "subject_id": subject_id,
+                    "model_version": model_version,
+                    "history_schema_version": history_schema_version,
+                }
+            )
         displayed_candidates = payload.get("displayed_candidates")
         lean_candidates = payload.get("lean_candidates")
         watch_candidates = payload.get("watch_candidates")
         all_candidates = payload.get("candidates")
+        daily_card = payload.get("daily_card")
         latest_counts_by_path[str(path)] = (
             len(displayed_candidates) if isinstance(displayed_candidates, list) else 0,
             len(lean_candidates) if isinstance(lean_candidates, list) else 0,
             len(watch_candidates) if isinstance(watch_candidates, list) else 0,
             len(all_candidates) if isinstance(all_candidates, list) else 0,
+            len(daily_card) if isinstance(daily_card, list) else 0,
         )
-        payloads.append((exported_at, screen_date, data_mode, candidates, str(path)))
+        payloads.append((exported_at, screen_date, data_mode, candidates, str(path), card_candidates))
 
     if not payloads:
         return LoadedHistory(
@@ -278,11 +308,11 @@ def _load_latest_predictions() -> LoadedHistory:
         )
 
     if all_history_mode_enabled():
-        latest_by_date: dict[str, tuple[datetime, str, str | None, list[dict], str]] = {}
-        for exported_at, screen_date, data_mode, candidates, payload_path in payloads:
+        latest_by_date: dict[str, tuple[datetime, str, str | None, list[dict], str, list[dict]]] = {}
+        for exported_at, screen_date, data_mode, candidates, payload_path, card_candidates in payloads:
             previous = latest_by_date.get(screen_date)
             if previous is None or (_payload_mode_rank(data_mode), exported_at) > (_payload_mode_rank(previous[2]), previous[0]):
-                latest_by_date[screen_date] = (exported_at, screen_date, data_mode, candidates, payload_path)
+                latest_by_date[screen_date] = (exported_at, screen_date, data_mode, candidates, payload_path, card_candidates)
         selected_payloads = list(latest_by_date.values())
         selected_dates = sorted(latest_by_date)
         selected_mode = "mixed"
@@ -291,10 +321,10 @@ def _load_latest_predictions() -> LoadedHistory:
         latest_completed_screen_date = max(
             (
                 screen_date
-                for _, screen_date, _, _, _ in payloads
+                for _, screen_date, _, _, _, _ in payloads
                 if date.fromisoformat(screen_date) < date.today()
             ),
-            default=max(screen_date for _, screen_date, _, _, _ in payloads),
+            default=max(screen_date for _, screen_date, _, _, _, _ in payloads),
         )
         selected_payloads = [item for item in payloads if item[1] == latest_completed_screen_date]
         selected_payloads = [max(selected_payloads, key=lambda item: (_payload_mode_rank(item[2]), item[0]))]
@@ -303,17 +333,18 @@ def _load_latest_predictions() -> LoadedHistory:
         selected_path = selected_payloads[0][4]
 
     loaded_predictions: list[dict] = []
-    for _, screen_date, _, candidates, _ in selected_payloads:
+    loaded_card_predictions: list[dict] = []
+    for _, screen_date, _, candidates, _, card_candidates in selected_payloads:
         loaded_predictions.extend(candidate | {"screen_date": screen_date} for candidate in candidates)
+        loaded_card_predictions.extend(card | {"screen_date": screen_date} for card in card_candidates)
     selected_displayed_count = 0
     selected_lean_count = 0
     selected_watch_count = 0
     selected_candidate_count = 0
+    selected_card_count = 0
     if selected_path is not None:
-        selected_displayed_count, selected_lean_count, selected_watch_count, selected_candidate_count = latest_counts_by_path.get(
-            selected_path,
-            (0, 0, 0, 0),
-        )
+        counts = latest_counts_by_path.get(selected_path, (0, 0, 0, 0, 0))
+        selected_displayed_count, selected_lean_count, selected_watch_count, selected_candidate_count, selected_card_count = counts
     return LoadedHistory(
         predictions=loaded_predictions,
         included_dates=selected_dates,
@@ -323,6 +354,8 @@ def _load_latest_predictions() -> LoadedHistory:
         selected_lean_count=selected_lean_count,
         selected_watch_count=selected_watch_count,
         selected_candidate_count=selected_candidate_count,
+        card_predictions=loaded_card_predictions,
+        selected_card_count=selected_card_count,
     )
 
 
@@ -515,6 +548,7 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                     side=prediction["side"],
                     line=float(prediction["line"]),
                     reason="no_logs_loaded",
+                    tier=str(prediction.get("history_tier") or "unclassified"),
                 )
             )
             continue
@@ -531,6 +565,7 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                         side=prediction["side"],
                         line=float(prediction["line"]),
                         reason="void_no_start",
+                        tier=str(prediction.get("history_tier") or "unclassified"),
                     )
                 )
             else:
@@ -544,6 +579,7 @@ def _resolve_predictions(predictions: list[dict]) -> ResolutionReport:
                         side=prediction["side"],
                         line=float(prediction["line"]),
                         reason=unresolved_reason or "unmatched",
+                        tier=str(prediction.get("history_tier") or "unclassified"),
                     )
                 )
             continue
@@ -1301,6 +1337,49 @@ def _render_unresolved_breakdown(rows: list[UnresolvedPrediction], max_examples:
     return lines
 
 
+def _render_daily_card_section(
+    card_predictions: list[dict],
+    resolved_card: list[ResolvedPrediction],
+    voided_card: list[VoidPrediction],
+    unresolved_card: list[UnresolvedPrediction],
+) -> list[str]:
+    if not card_predictions:
+        return []
+    today = date.today()
+    pending = sum(
+        1
+        for row in card_predictions
+        if date.fromisoformat(row["screen_date"]) >= today
+    )
+    graded = [row for row in resolved_card if row.outcome in ("win", "loss")]
+    wins = sum(1 for row in graded if row.outcome == "win")
+    losses = len(graded) - wins
+    pushes = sum(1 for row in resolved_card if row.outcome == "push")
+    lines = ["Daily Card (pre-registered research policy; not Core/Lean/Watch):"]
+    lines.append(f"- Card plays loaded: {len(card_predictions)}")
+    lines.append(f"- Card plays graded: {len(graded)} ({wins}-{losses})")
+    if graded:
+        lines.append(f"- Card hit rate: {(wins / len(graded)) * 100:.1f}%")
+        lines.append(f"- Card flat units at -110: {wins * (100 / 110) - losses:+.2f}")
+    lines.append(
+        f"- Card pushes: {pushes}; voids: {len(voided_card)}; "
+        f"unresolved: {len(unresolved_card)}; pending: {pending}"
+    )
+    for row in sorted(resolved_card, key=lambda item: (item.screen_date, item.pitcher_name)):
+        projected = (
+            f"{row.projected_strikeouts:.1f}" if row.projected_strikeouts is not None else "-"
+        )
+        lines.append(
+            f"  {row.screen_date} {row.pitcher_name} ({row.team} vs {row.opponent}) "
+            f"UNDER {row.line:g} | proj {projected} | actual {row.actual:g} | {row.outcome}"
+        )
+    lines.append(
+        "- Baseline comparisons for the pre-registered success rule are computed "
+        "by the weekly grader (pitcher_grading.daily_card_summary), not this scope."
+    )
+    return lines
+
+
 def _export_backtest_report(screen_date: str, report_text: str, mode: str = "single") -> Path:
     backtests_dir = OUTPUTS_DIR / "backtests"
     backtests_dir.mkdir(parents=True, exist_ok=True)
@@ -1318,8 +1397,9 @@ def main() -> int:
         return 2
     loaded = _load_latest_predictions()
     predictions = loaded.predictions
+    card_predictions = loaded.card_predictions
     included_dates = loaded.included_dates
-    if not predictions:
+    if not predictions and not card_predictions:
         history_files = _history_files(selected_history_dir)
         if not history_files:
             print(f"No screen run history found in {selected_history_dir}.")
@@ -1344,11 +1424,16 @@ def main() -> int:
             print("- Note: this slate had qualified candidates, but none made the displayed board for the selected prediction scope.")
         return 0
 
-    report = _resolve_predictions(predictions)
-    resolved = report.resolved
-    if not resolved and not report.voided:
+    report = _resolve_predictions(predictions + card_predictions)
+    resolved = [row for row in report.resolved if row.tier != "daily_card"]
+    card_resolved = [row for row in report.resolved if row.tier == "daily_card"]
+    voided = [row for row in report.voided if row.tier != "daily_card"]
+    card_voided = [row for row in report.voided if row.tier == "daily_card"]
+    unresolved = [row for row in report.unresolved if row.tier != "daily_card"]
+    card_unresolved = [row for row in report.unresolved if row.tier == "daily_card"]
+    if not resolved and not voided and not card_resolved and not card_voided:
         print("No finished strikeout predictions could be resolved yet.")
-        print(f"- Stored predictions found: {len(predictions)}")
+        print(f"- Stored predictions found: {len(predictions) + len(card_predictions)}")
         print(f"- Pending/future predictions skipped: {report.pending}")
         print(f"- Unresolved finished predictions: {len(report.unresolved)}")
         if loaded.selected_mode:
@@ -1380,9 +1465,10 @@ def main() -> int:
     )
     lines.append(f"- Latest unique predictions loaded: {len(predictions)}")
     lines.append(f"- Finished predictions graded: {len(resolved)}")
-    lines.append(f"- Void predictions: {len(report.voided)}")
-    lines.append(f"- Unresolved finished predictions: {len(report.unresolved)}")
+    lines.append(f"- Void predictions: {len(voided)}")
+    lines.append(f"- Unresolved finished predictions: {len(unresolved)}")
     lines.append(f"- Pending/future predictions skipped: {report.pending}")
+    lines.append(f"- Daily Card plays in snapshot: {loaded.selected_card_count}")
     if resolved:
         lines.append(f"- Overall hit rate: {(_hit_rate(resolved) * 100):.1f}%")
         lines.append(f"- Pushes: {pushes}")
@@ -1425,7 +1511,16 @@ def main() -> int:
         lines.append("")
         lines.extend(_render_loss_review(resolved))
         lines.append("")
-    lines.extend(_render_unresolved_breakdown(report.unresolved))
+    lines.extend(_render_unresolved_breakdown(unresolved))
+    card_lines = _render_daily_card_section(
+        card_predictions,
+        card_resolved,
+        card_voided,
+        card_unresolved,
+    )
+    if card_lines:
+        lines.append("")
+        lines.extend(card_lines)
 
     report_text = "\n".join(lines)
     print(report_text)
