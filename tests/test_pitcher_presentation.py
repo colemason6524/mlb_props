@@ -121,7 +121,7 @@ class PitcherPresentationTests(unittest.TestCase):
         self.assertEqual(payload[0]["recommendation_tier"], "lean")
         self.assertEqual(payload[0]["display_role"], "best_available")
         self.assertEqual(payload[0]["signal_balance"], 5)
-        self.assertEqual(payload[0]["confidence_model_version"], "pitcher-confidence-provisional-v1")
+        self.assertEqual(payload[0]["confidence_model_version"], "pitcher-confidence-calibrated-v2")
         self.assertFalse(payload[0]["price_included"])
 
     def test_console_uses_side_aligned_edge_and_explains_signal_semantics(self) -> None:
@@ -149,7 +149,7 @@ class PitcherPresentationTests(unittest.TestCase):
         self.assertIn("Work Rel", rendered)
         self.assertIn("+1.40", rendered)
         self.assertIn("price-agnostic estimated chance", rendered)
-        self.assertIn("not yet calibrated", rendered)
+        self.assertIn("calibrated (v1) on a small graded sample", rendered)
         self.assertLess(rendered.index("Under Watch"), rendered.index("Lean One"))
 
     def test_discord_ranks_best_available_without_promoting_it_to_core(self) -> None:
@@ -173,7 +173,7 @@ class PitcherPresentationTests(unittest.TestCase):
         self.assertIn("% | Best Available (Watch) |", embed["fields"][2]["name"])
         self.assertIn("Side edge `+1.3`", embed["fields"][1]["value"])
         self.assertIn("Workload `HIGH`", embed["fields"][1]["value"])
-        self.assertIn("provisional and excludes sportsbook price", embed["footer"]["text"])
+        self.assertIn("calibrated on a small sample and excludes sportsbook price", embed["footer"]["text"])
         self.assertNotIn("Signal balance", embed["fields"][1]["value"])
         self.assertNotIn("Score", str(embed))
 

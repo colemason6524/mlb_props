@@ -28,9 +28,12 @@ PITCHER_OPPORTUNITY_SHADOW_VERSION = "opportunity-shadow-v1"
 # K-rate/BF projection without changing the active production recommendation.
 PITCHER_RECENCY_SHADOW_VERSION = "recency-shadow-v1"
 
-# Confidence is versioned independently because it is a provisional,
-# price-agnostic probability layer and does not change the active projection.
-PITCHER_CONFIDENCE_MODEL_VERSION = "pitcher-confidence-provisional-v1"
+# Confidence is versioned independently because it is a price-agnostic
+# probability layer and does not change the active projection.
+# pitcher-confidence-calibrated-v2 applies a first-pass calibration shrink
+# (0.55, display capped at 57%) fitted on the graded schema-6 sample after the
+# old top bands observed 15-32 points below their forecasts.
+PITCHER_CONFIDENCE_MODEL_VERSION = "pitcher-confidence-calibrated-v2"
 
 # The display policy is versioned separately because slate rank and user-facing
 # labels can change without changing the underlying recommendation model.

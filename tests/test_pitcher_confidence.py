@@ -75,14 +75,22 @@ class PitcherConfidenceTests(unittest.TestCase):
 
         self.assertGreater(estimate.win_probability, 0.50)
 
-    def test_estimate_is_explicitly_provisional_and_price_agnostic(self) -> None:
+    def test_estimate_is_calibrated_and_price_agnostic(self) -> None:
         estimate = estimate_pitcher_confidence(_candidate(projected=9.0))
 
-        self.assertEqual(estimate.calibration_status, "PROVISIONAL")
+        self.assertEqual(estimate.calibration_status, "CALIBRATED_V1")
         self.assertFalse(estimate.price_included)
-        self.assertLessEqual(estimate.confidence_percentage, 68)
-        self.assertIn("UNCALIBRATED", estimate.flags)
+        self.assertLessEqual(estimate.confidence_percentage, 57)
+        self.assertEqual(estimate.calibration_shrink, 0.55)
+        self.assertIn("CALIBRATED_V1", estimate.flags)
         self.assertIn("PRICE_NOT_INCLUDED", estimate.flags)
+
+    def test_strong_edges_no_longer_reach_the_old_cap(self) -> None:
+        strong = estimate_pitcher_confidence(_candidate(projected=9.5))
+
+        self.assertEqual(strong.win_probability, 0.57)
+        self.assertLess(strong.confidence_percentage, 60)
+        self.assertEqual(strong.label, "SOLID")
 
     def test_label_boundaries(self) -> None:
         self.assertEqual(confidence_label(60), "STRONG")

@@ -186,6 +186,7 @@ class PitcherConfidenceEstimate:
     raw_win_probability: float
     reliability_weight: float
     price_included: bool = False
+    calibration_shrink: float = 1.0
     flags: list[str] = field(default_factory=list)
 
 

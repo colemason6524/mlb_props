@@ -112,7 +112,7 @@ def render_candidates(
         rendered_sections.append(
             f"Slate read: {len(core)} Core play(s). Top of slate is #{top.slate_rank} "
             f"{top.candidate.subject_name} {top.candidate.side} {top.candidate.line:.1f} "
-            f"at provisional confidence {top.confidence_estimate.confidence_percentage}%."
+            f"at calibrated confidence {top.confidence_estimate.confidence_percentage}%."
         )
     elif best_available:
         top = best_available[0]
@@ -120,7 +120,7 @@ def render_candidates(
             "Slate read: No Core plays cleared the absolute standard. "
             f"Best available is #{top.slate_rank} {top.candidate.subject_name} "
             f"{top.candidate.side} {top.candidate.line:.1f} "
-            f"at provisional confidence {top.confidence_estimate.confidence_percentage}% "
+            f"at calibrated confidence {top.confidence_estimate.confidence_percentage}% "
             f"({top.recommendation_tier.title()}); it is not promoted to Core."
         )
     else:
@@ -154,7 +154,8 @@ def render_candidates(
         rendered_sections.append("")
 
     rendered_sections.append(
-        "Legend: Provisional Conf is the price-agnostic estimated chance that the listed side clears the posted line; it is not yet calibrated. "
+        "Legend: Conf is the price-agnostic estimated chance that the listed side clears the posted line; "
+        "it is calibrated (v1) on a small graded sample and capped at 57%. "
         "Rank follows that estimate within today's eligible board; Tier remains the absolute Core/Lean/Watch recommendation. "
         "Signal is retained as an internal additive diagnostic, not a probability. "
         "Work Rel is display-only workload reliability and does not change the tier. "
@@ -288,7 +289,7 @@ def render_pitcher_props_discord_embeds(
         f"{prop_line_count} prop lines across {games_count} games. "
         f"Coverage `{coverage_status}`. "
         "Tier is the absolute recommendation; # rank is relative to today's eligible board. "
-        "Confidence is provisional and price-agnostic; workload reliability is display-only."
+        "Confidence is calibrated (v1, small sample) and price-agnostic; workload reliability is display-only."
     )
     embed = {
         "title": f"MLB Pitcher Props - {screen_date}",
@@ -301,7 +302,7 @@ def render_pitcher_props_discord_embeds(
         "fields": [],
         "footer": {
             "text": (
-                "Confidence is provisional and excludes sportsbook price. "
+                "Confidence is calibrated on a small sample and excludes sportsbook price. "
                 "Confirm line availability and game status before locking."
             )
         },

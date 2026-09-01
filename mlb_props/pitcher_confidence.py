@@ -7,9 +7,17 @@ from .models import Candidate, PitcherConfidenceEstimate
 from .version import PITCHER_CONFIDENCE_MODEL_VERSION
 
 
-CALIBRATION_STATUS = "PROVISIONAL"
+CALIBRATION_STATUS = "CALIBRATED_V1"
+# First-pass calibration fitted on the graded schema-6 sample (Aug 5-20,
+# n=194 research rows + tier subset). Observed by old forecast band:
+# 60%+ -> 40.0%, 57-59% -> 42.4%, 54-56% -> 58.1%, 51-53% -> 54.7%.
+# Every band above 57% forecast was overconfident by 15-32 points, so the
+# display scale is compressed toward 50% and capped below the old STRONG
+# boundary. Order is preserved for ranking; STRONG is intentionally
+# unreachable until a bigger sample proves a band that deserves it.
+CALIBRATION_SHRINK = 0.55
 MIN_DISPLAY_PROBABILITY = 0.50
-MAX_DISPLAY_PROBABILITY = 0.68
+MAX_DISPLAY_PROBABILITY = 0.57
 
 _SEVERE_RISK_FLAGS = {
     "LOW_PITCH",
@@ -36,9 +44,11 @@ _MODERATE_RISK_FLAGS = {
 def estimate_pitcher_confidence(candidate: Candidate) -> PitcherConfidenceEstimate:
     """Estimate side win probability without changing projection, score, or tier.
 
-    This is intentionally a provisional, price-agnostic estimate. It starts with
-    an overdispersed distribution around the active projection, then shrinks the
-    directional probability toward 50% when workload/sample reliability is weak.
+    This is a price-agnostic estimate. It starts with an overdispersed
+    distribution around the active projection, shrinks the directional
+    probability toward 50% when workload/sample reliability is weak, and then
+    applies a first-pass calibration shrink fitted on the graded schema-6
+    sample so displayed bands match observed hit rates.
     """
     projected_mean = _projected_mean(candidate)
     projected_sd = _projected_standard_deviation(candidate, projected_mean)
@@ -50,6 +60,7 @@ def estimate_pitcher_confidence(candidate: Candidate) -> PitcherConfidenceEstima
     )
     reliability_weight, flags = _reliability_weight(candidate)
     probability = 0.5 + ((raw_probability - 0.5) * reliability_weight)
+    probability = 0.5 + ((probability - 0.5) * CALIBRATION_SHRINK)
     probability = min(MAX_DISPLAY_PROBABILITY, max(MIN_DISPLAY_PROBABILITY, probability))
     rounded_probability = round(probability, 3)
     percentage = int(round(rounded_probability * 100))
@@ -65,6 +76,7 @@ def estimate_pitcher_confidence(candidate: Candidate) -> PitcherConfidenceEstima
         raw_win_probability=round(raw_probability, 3),
         reliability_weight=round(reliability_weight, 3),
         price_included=False,
+        calibration_shrink=CALIBRATION_SHRINK,
         flags=flags,
     )
 
@@ -154,7 +166,7 @@ def _reliability_weight(candidate: Candidate) -> tuple[float, list[str]]:
     weight -= min(0.18, (0.055 * severe_count) + (0.025 * moderate_count))
     weight = min(0.75, max(0.25, weight))
 
-    flags = ["UNCALIBRATED", "PRICE_NOT_INCLUDED"]
+    flags = ["CALIBRATED_V1", "PRICE_NOT_INCLUDED"]
     if opportunity_reliability == "LOW":
         flags.append("LOW_WORKLOAD_RELIABILITY")
     if starts_available < 5:
