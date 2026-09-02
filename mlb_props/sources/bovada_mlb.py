@@ -26,7 +26,7 @@ from zoneinfo import ZoneInfo
 EASTERN = ZoneInfo("America/New_York")
 
 BOVADA_BASE = "https://www.bovada.lv/services/sports/event/coupon/events/A/description"
-BOVADA_MLB_URL = f"{BOVADA_BASE}/baseball/mlb?marketFilterId=def&preMatchOnly=true"
+BOVADA_MLB_URL = f"{BOVADA_BASE}/baseball/mlb?marketFilterId=def"
 
 HTTP_TIMEOUT_SECONDS = 30
 HTTP_USER_AGENT = (

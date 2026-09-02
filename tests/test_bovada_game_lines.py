@@ -14,6 +14,7 @@ from mlb_props.sources.bovada_mlb import (
     fetch_mlb_payload,
     normalize_team_name,
     parse_games,
+    BOVADA_MLB_URL,
 )
 
 
@@ -117,6 +118,12 @@ class ParseGamesTests(unittest.TestCase):
         ]
         games, _ = parse_games([{"events": [event]}])
         self.assertNotIn("spread", games[0].markets)
+
+
+class BovadaUrlTests(unittest.TestCase):
+    def test_coupon_url_does_not_use_prematch_only(self) -> None:
+        self.assertNotIn("preMatchOnly", BOVADA_MLB_URL)
+        self.assertIn("marketFilterId=def", BOVADA_MLB_URL)
 
 
 class FetchMlbPayloadTests(unittest.TestCase):
