@@ -6,11 +6,13 @@ baseball model with graded Core/Lean P&L + CLV — not pipeline busywork.
 
 ## 1. Status one-liners
 
-- **Hot Hits**: healthy and now unblocked — history retention is FIXED (33 exports
-  on Windows, 2026-08-01 → 2026-09-04, only expected gaps 8/16 outage + 8/24); the
-  8/5–8/20 confidence exports the 8/21 handoff called missing are all present.
-  Discord sent daily (9/4: 14 production candidates, 135 research pool).
-  Grading is still pending and is the next real work.
+- **Hot Hits**: GRADED 2026-09-04 on all 33 retained Windows exports (8/1 → 9/4).
+  Delivered cards: 28/46 legs (60.9%) — Core 14/19 (73.7%), Value 14/27 (51.9%);
+  void-adjusted full card 11/26 (42.3%) vs all-Core 9/14 (64.3%). Confidence pool
+  (n=2954): observed 61.9% vs forecast 67.1% (overconfident ~5pt), Brier 0.238
+  ≈ base-rate-only 0.236 (no edge); current-gate pass 62.9% vs excluded 61.6% (no
+  separation). Leave-off: `.analysis/hot_hits_grade_20260904.md`. No production
+  change made.
 - **Pitcher props**: pipeline healthy on Windows — 9/4 scheduled run: schema 8,
   20 qualified candidates, 0 Core / 0 Lean / 0 Watch (honest empty board), Daily
   Card delivered with 4 small-edge unders. All 8/31 version pins live:
@@ -32,7 +34,7 @@ baseball model with graded Core/Lean P&L + CLV — not pipeline busywork.
 
 | Stream | Action | WHEN / trigger |
 | --- | --- | --- |
-| Hot Hits | Grade retained history: `hot_hits_report.py --history-dir <windows pull> --card-policy delivered` plus confidence-pool calibration (forecast vs observed hit rate + Brier by label, current-gate pass/fail). | Data exists NOW — first session with ~1 hour; the 8/21 retention blocker is gone. |
+| Hot Hits | GRADED 2026-09-04 (delivered policy + confidence calibration, 33 exports 8/1→9/4, n=46 delivered legs / 2954 graded pool rows): Core 14/19 (73.7%), Value 14/27 (51.9%), all-Core parlays 9/14 (64.3%) vs full card 11/26 (42.3%); confidence overconfident ~5pt, Brier 0.238 ≈ base-rate 0.236, L5 gate pass/fail shows no separation. Next: decide (with direction) whether a Core-only default card policy version is warranted once September delivered legs reach n≈25–30; confidence re-leveling is a separate research-only change candidate. | Re-pull Windows `hot_hits_*` and re-grade at the next weekly sync (≥ 2026-09-11); production/card change only after that grade and only as a new policy version commit. |
 | Pitcher props / Daily Card | Pull Windows history, run `python3 backtest.py --all-history --include-watch --history-dir pitcher_props_from_windows/<window>` and weekly `pitcher_grading.daily_card_summary` (hit rate, units @ -110, always-under baseline). | First pull after ~9/8 (≈1 week of September card); formal success-rule check when n≥100 graded card plays (≈ early Oct). |
 | Core v2 gates | Grade new-gate Core/Lean sample (~50–100 resolved candidates). If the 0.55 no-vig threshold proves wrong, that is a separate `core-lean-watch-v3` commit. | Late September, after the grade — never before. |
 | Game markets | Build the line-movement report (morning vs evening snapshots, starter-change detection via probable-pitcher diffs). | After two full weeks of collection: ≥ 2026-09-10. |
@@ -86,5 +88,8 @@ baseball model with graded Core/Lean P&L + CLV — not pipeline busywork.
   gitignored via 99f53b5), `run_hot_hits_task.ps1` — leave them alone.
 - **Docs to read first**: `README.md` (pitcher objective, assumptions, checkpoints),
   `docs/PITCHER_PROPS_HANDOFF.md`, `docs/HOT_HITS_HANDOFF.md`, this file.
-- **Prior graded evidence**: `.analysis/schema6/pitcher_schema6_report.md`,
+- **Prior graded evidence**: `.analysis/hot_hits_grade_20260904.md` (2026-09-04 Hot
+  Hits delivered grade + confidence calibration; full report under
+  `.analysis/hot_hits_windows_20260904/`),
+  `.analysis/schema6/pitcher_schema6_report.md`,
   `.analysis/first_hunt/` (unders segment derivation behind the card).
