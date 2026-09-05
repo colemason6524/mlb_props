@@ -129,6 +129,16 @@ def _recommendation_section(rows, title: str) -> list[str]:
     return lines
 
 
+def _projection_stat_line(label: str, stat: dict) -> str:
+    if stat["mae"] is None:
+        return f"  - {label}: no resolved rows"
+    bias = stat["bias"] if stat["bias"] is not None else 0.0
+    rmse = stat["rmse"] if stat["rmse"] is not None else 0.0
+    return (
+        f"  - {label}: bias {bias:+.2f}, MAE {stat['mae']:.2f}, RMSE {rmse:.2f}"
+    )
+
+
 def _projection_section(rows, title: str) -> list[str]:
     lines = [f"## {title}", ""]
     metrics = active_vs_shadow_metrics(rows)
@@ -136,36 +146,21 @@ def _projection_section(rows, title: str) -> list[str]:
     bf = metrics["bf"]
     outs = metrics["outs"]
     lines.append(f"- K projection rows (n={k['n']}):")
-    lines.append(
-        f"  - Active: bias {k['active']['bias']:+.2f}, MAE {k['active']['mae']:.2f}, "
-        f"RMSE {k['active']['rmse']:.2f}"
-    )
-    lines.append(
-        f"  - Shadow: bias {k['shadow']['bias']:+.2f}, MAE {k['shadow']['mae']:.2f}, "
-        f"RMSE {k['shadow']['rmse']:.2f}"
-    )
+    lines.append(_projection_stat_line("Active", k["active"]))
+    lines.append(_projection_stat_line("Shadow", k["shadow"]))
     if k["active"]["mae"] is not None and k["shadow"]["mae"] is not None:
         lines.append(
             f"  - Shadow minus active MAE: {k['shadow']['mae'] - k['active']['mae']:+.2f}"
         )
     lines.append(f"- BF projection rows (n={bf['n']}):")
-    lines.append(
-        f"  - Active: bias {bf['active']['bias']:+.2f}, MAE {bf['active']['mae']:.2f}, "
-        f"RMSE {bf['active']['rmse']:.2f}"
-    )
-    lines.append(
-        f"  - Shadow: bias {bf['shadow']['bias']:+.2f}, MAE {bf['shadow']['mae']:.2f}, "
-        f"RMSE {bf['shadow']['rmse']:.2f}"
-    )
+    lines.append(_projection_stat_line("Active", bf["active"]))
+    lines.append(_projection_stat_line("Shadow", bf["shadow"]))
     if bf["active"]["mae"] is not None and bf["shadow"]["mae"] is not None:
         lines.append(
             f"  - Shadow minus active MAE: {bf['shadow']['mae'] - bf['active']['mae']:+.2f}"
         )
     lines.append(f"- Outs projection rows (n={outs['n']}):")
-    lines.append(
-        f"  - Active: bias {outs['active']['bias']:+.2f}, MAE {outs['active']['mae']:.2f}, "
-        f"RMSE {outs['active']['rmse']:.2f}"
-    )
+    lines.append(_projection_stat_line("Active", outs["active"]))
     if outs["opportunity_shadow"]["mae"] is not None:
         lines.append(
             f"  - Opportunity shadow: bias {outs['opportunity_shadow']['bias']:+.2f}, "
