@@ -93,3 +93,14 @@ baseball model with graded Core/Lean P&L + CLV — not pipeline busywork.
   `.analysis/hot_hits_windows_20260904/`),
   `.analysis/schema6/pitcher_schema6_report.md`,
   `.analysis/first_hunt/` (unders segment derivation behind the card).
+
+## 6. Infrastructure change (2026-09-08): Windows retired, Azure VM active
+
+Daily MLB collection moved from the Windows desktop to the Azure VM
+(`ssh azure`). All four scheduled tasks now run as systemd user timers
+(11:19/11:37/11:53/16:31 ET, timezone-explicit America/Detroit in OnCalendar).
+Setup was validated 2026-09-08: hot-hits dry run clean (Savant 124/124),
+markets unit E2E exit 0 with 14/14 Bovada coverage, webhooks reachable, no
+double-scheduler (tmux experiment disabled). First scheduled fires are
+2026-09-08. See `docs/AZURE_VM_OPERATIONS.md` for units, health pass, pull
+commands, and VM hygiene. Windows-specific sections above are historical.
