@@ -8,10 +8,12 @@ from mlb_props.daily_card import (
     build_daily_card,
     daily_card_payload,
     daily_card_policy_payload,
+    daily_card_research_label,
     daily_card_side_edge,
     qualifies_for_daily_card,
 )
 from mlb_props.models import Candidate, OpportunityShadow, PitcherConfidenceEstimate
+from mlb_props.output import _daily_card_embed_field, render_daily_card
 from mlb_props.version import PITCHER_DAILY_CARD_POLICY_VERSION
 
 
@@ -208,6 +210,49 @@ class DailyCardPayloadTests(unittest.TestCase):
         self.assertEqual(policy["max_abs_edge"], 1.0)
         self.assertEqual(policy["limit"], 4)
         self.assertIsNone(policy["market_support_gate"])
+
+
+class DailyCardResearchLabelTests(unittest.TestCase):
+    """The card must never read as a play: no 'Core', no stake, explicit research label."""
+
+    def test_label_includes_research_only_and_running_record(self) -> None:
+        label = daily_card_research_label({"wins": 5, "losses": 10, "units": -6.41, "through": "2026-09-07"})
+
+        self.assertEqual(
+            label,
+            "RESEARCH ONLY — not a play; tracking to n=100 (currently 5-10, -6.41u through 2026-09-07)",
+        )
+
+    def test_label_accepts_grader_summary_shape_and_falls_back(self) -> None:
+        from_grader = daily_card_research_label({"wins": 7, "losses": 9, "units_at_minus_110": -2.64})
+        self.assertIn("currently 7-9, -2.64u", from_grader)
+
+        fallback = daily_card_research_label({})
+        self.assertIn("RESEARCH ONLY — not a play; tracking to n=100", fallback)
+        self.assertIn("negative so far", fallback)
+
+    def test_default_label_uses_module_snapshot(self) -> None:
+        self.assertIn("RESEARCH ONLY — not a play; tracking to n=100", daily_card_research_label())
+        self.assertIn("currently 5-10, -6.41u", daily_card_research_label())
+
+    def test_terminal_render_carries_research_label_and_no_core_or_stake(self) -> None:
+        for card in (build_daily_card([_candidate("Card One", confidence=55)]), []):
+            rendered = render_daily_card(card)
+            self.assertIn("RESEARCH ONLY — not a play; tracking to n=100 (currently 5-10, -6.41u", rendered)
+            self.assertIn("no stake is recommended", rendered)
+            self.assertNotIn("Core", rendered)
+            self.assertNotIn("plays", rendered)
+        self.assertIn("#1 Card One", render_daily_card(build_daily_card([_candidate("Card One", confidence=55)])))
+
+    def test_discord_field_carries_research_label_and_no_core_or_stake(self) -> None:
+        for card in (build_daily_card([_candidate("Card One", confidence=55)]), []):
+            field = _daily_card_embed_field(card)
+            self.assertTrue(field["name"].startswith("Daily Unders Card — RESEARCH ONLY — not a play"))
+            self.assertIn("tracking to n=100 (currently 5-10, -6.41u", field["name"])
+            self.assertIn("no stake is recommended", field["value"])
+            self.assertNotIn("Core", field["name"] + field["value"])
+            self.assertNotIn("plays", field["name"] + field["value"])
+            self.assertLessEqual(len(field["name"]), 256)
 
 
 if __name__ == "__main__":

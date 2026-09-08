@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .daily_card import DAILY_CARD_LIMIT, DailyCardPlay
+from .daily_card import DAILY_CARD_LIMIT, DailyCardPlay, daily_card_research_label
 from .hot_hits_policy import (
     CORE_FIRST_POLICY_VERSION,
     HOT_HITS_POLICY_VERSION,
@@ -259,16 +259,20 @@ def render_starter_board(assessments: Iterable[StarterAssessment], limit: int = 
 
 
 def render_daily_card(card: list[DailyCardPlay]) -> str:
-    """Render the pre-registered Daily Unders Card section for the terminal board."""
+    """Render the pre-registered Daily Unders Card section for the terminal board.
+
+    This block is a research evaluation, not a recommendation: it must never
+    read as a play or imply a stake.
+    """
     lines = [
-        f"Daily Card (research; pre-registered {PITCHER_DAILY_CARD_POLICY_VERSION}; not Core):"
+        f"Daily Unders Card — {daily_card_research_label()} "
+        f"[pre-registered {PITCHER_DAILY_CARD_POLICY_VERSION}]:",
     ]
     if not card:
         lines.append(
-            "  No Daily Card plays today (gates: UNDER, line<=5.5, |proj-line|<=1.0). "
-            "Zero-pick days are reported honestly; the card is never padded."
+            "  No Daily Card rows today (gates: UNDER, line<=5.5, |proj-line|<=1.0). "
+            "Zero-row days are reported honestly; the card is never padded."
         )
-        return "\n".join(lines)
     for play in card:
         item = play.candidate
         estimate = item.confidence_estimate
@@ -279,8 +283,9 @@ def render_daily_card(card: list[DailyCardPlay]) -> str:
             f"(edge {play.side_edge:+.2f}) | conf {confidence} | work rel {opportunity_reliability(item)}"
         )
     lines.append(
-        "  Daily Card is a pre-registered segment policy graded against the "
-        "always-under baseline; it is separate from Core/Lean/Watch tiers."
+        "  Research rows only — no stake is recommended. The card is a pre-registered "
+        "segment policy graded against the always-under baseline and is separate from "
+        "the recommendation tiers above."
     )
     return "\n".join(lines)
 
@@ -400,8 +405,8 @@ def _daily_card_embed_field(daily_card: list[DailyCardPlay] | None) -> dict:
     card = daily_card or []
     if not card:
         value = (
-            f"No Daily Card plays today. Pre-registered gates: UNDER, line <=5.5, "
-            f"|proj-line| <=1.0; zero-pick days are reported honestly and the card is never padded."
+            "No Daily Card rows today. Pre-registered gates: UNDER, line <=5.5, "
+            "|proj-line| <=1.0; zero-row days are reported honestly and the card is never padded."
         )
     else:
         rows = []
@@ -419,8 +424,12 @@ def _daily_card_embed_field(daily_card: list[DailyCardPlay] | None) -> dict:
                 f"edge `{play.side_edge:+.2f}`, conf `{confidence}`"
             )
         value = "\n".join(rows)
+    value += (
+        f"\n_Research rows only — no stake is recommended. Pre-registered "
+        f"{PITCHER_DAILY_CARD_POLICY_VERSION}, graded against the always-under baseline._"
+    )
     return {
-        "name": f"Daily Card (research; {PITCHER_DAILY_CARD_POLICY_VERSION}; not Core)",
+        "name": f"Daily Unders Card — {daily_card_research_label()}",
         "value": value,
         "inline": False,
     }

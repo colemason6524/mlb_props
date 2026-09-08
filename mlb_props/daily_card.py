@@ -15,6 +15,43 @@ DAILY_CARD_MAX_ABS_EDGE = 1.0
 DAILY_CARD_LIMIT = 4
 _EPSILON = 1e-9
 
+# The card is a pre-registered evaluation, not a recommendation. It keeps
+# rendering so the sample reaches the success-rule size, but every surface must
+# say so. The running record is a hand-refreshed snapshot from
+# pitcher_grading.daily_card_summary (the live renderer runs pre-slate with no
+# grader output in scope); update it at each weekly grade.
+DAILY_CARD_TRACKING_TARGET_N = 100
+DAILY_CARD_RUNNING_RECORD = {
+    "wins": 5,
+    "losses": 10,
+    "units": -6.41,  # flat 1u at recorded FanDuel prices
+    "through": "2026-09-07",
+}
+DAILY_CARD_RESEARCH_LABEL = "RESEARCH ONLY — not a play"
+
+
+def daily_card_research_label(record: dict | None = None) -> str:
+    """Banner text for the card block: research-only status plus the running record.
+
+    ``record`` accepts either the module snapshot shape (``wins``/``losses``/
+    ``units``/``through``) or a ``pitcher_grading.daily_card_summary`` dict
+    (``wins``/``losses``/``units_at_minus_110``). Falls back to the static
+    "negative so far" wording when no record is available.
+    """
+    snapshot = DAILY_CARD_RUNNING_RECORD if record is None else record
+    label = f"{DAILY_CARD_RESEARCH_LABEL}; tracking to n={DAILY_CARD_TRACKING_TARGET_N}"
+    wins = snapshot.get("wins")
+    losses = snapshot.get("losses")
+    units = snapshot.get("units", snapshot.get("units_at_minus_110"))
+    if wins is None or losses is None:
+        return f"{label} (research only, negative so far)"
+    detail = f"currently {int(wins)}-{int(losses)}"
+    if units is not None:
+        detail += f", {float(units):+.2f}u"
+    if snapshot.get("through"):
+        detail += f" through {snapshot['through']}"
+    return f"{label} ({detail})"
+
 
 @dataclass(frozen=True)
 class DailyCardPlay:
