@@ -41,6 +41,20 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 
 ## 2026-09-08 validation results (pre-first-fire)
 
+Pre-flight pass (~00:15 ET, 11h before first fire):
+
+- `systemd-analyze --user verify` on all four services + timers: rc=0.
+- Calendar math exact: next elapses 15:19/15:37/15:53/20:31 UTC =
+  11:19/11:37/11:53/16:31 ET (timezone suffix resolves correctly on systemd 249).
+- Runner secret gate tested safely: env file without the pitcher webhook fails
+  fast (`FAILED: ... not configured`, exit 1) — env sourcing + gate proven.
+- History hygiene: no dry-run pollution; only 4 valid game_markets snapshots
+  (3 from 9/7 tmux/manual, 1 from the E2E unit test).
+- VM state: 55G free disk, ~450M RAM available, lock file present, WIP tree
+  intact (still uncommitted — commit deliberately before any rebuild).
+
+First-fire results below should be appended after 2026-09-08 11:45 ET.
+
 - Hot-hits dry run (no Discord, no export): full pipeline OK from Azure —
   14 slate games, 252 batters, 12 qualified, Savant shadow 124/124, Python
   3.10 compatible. Log: `logs/dry_hot_hits.log`.
