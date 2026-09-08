@@ -94,6 +94,31 @@ baseball model with graded Core/Lean P&L + CLV — not pipeline busywork.
   `.analysis/schema6/pitcher_schema6_report.md`,
   `.analysis/first_hunt/` (unders segment derivation behind the card).
 
+## 7. 2026-09-08 — Daily Unders Card relabeled RESEARCH ONLY (rendering only)
+
+- Sep 1–7 card grade: **5–10, −6.41u** at recorded FanDuel prices, below the
+  always-under baseline (48.6%). The pre-registered evaluation continues to
+  n=100 (success rule unchanged); nothing about selection/gates changed.
+- Terminal (`render_daily_card`) and Discord (`_daily_card_embed_field`) blocks
+  now carry "Daily Unders Card — RESEARCH ONLY — not a play; tracking to n=100
+  (currently 5-10, -6.41u through 2026-09-07)" plus a "no stake is recommended"
+  footer. The header no longer says "Core" at all (previously "not Core"), and
+  "plays" wording was replaced by "rows". Label lives in
+  `mlb_props/daily_card.py` (`daily_card_research_label`, snapshot
+  `DAILY_CARD_RUNNING_RECORD`) — **refresh the snapshot at each weekly grade**
+  from `pitcher_grading.daily_card_summary` (the function also accepts that dict).
+  No `outputs/daily_unders/summary.md` exists on Mac or VM, so there is no live
+  read; the record is a hand-maintained constant.
+- `mlb_props/version.py` was deliberately **not** bumped
+  (`PITCHER_DISPLAY_POLICY_VERSION` convention would call for it): that file is
+  locally modified on both Mac and VM by the in-flight game-markets migration
+  and touching it would block the VM `git pull --ff-only`. Bump to
+  `provisional-confidence-rank-v2` (or add a card display version) in the
+  migration commit.
+- The "No Discord polish" rule in §4 was overridden for this one change on
+  direction, because the block could be read as a play while negative.
+- Tests: `tests/test_daily_card.py::DailyCardResearchLabelTests` (210 total).
+
 ## 6. Infrastructure change (2026-09-08): Windows retired, Azure VM active
 
 Daily MLB collection moved from the Windows desktop to the Azure VM
