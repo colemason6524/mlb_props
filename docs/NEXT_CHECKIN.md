@@ -129,3 +129,29 @@ markets unit E2E exit 0 with 14/14 Bovada coverage, webhooks reachable, no
 double-scheduler (tmux experiment disabled). First scheduled fires are
 2026-09-08. See `docs/AZURE_VM_OPERATIONS.md` for units, health pass, pull
 commands, and VM hygiene. Windows-specific sections above are historical.
+
+## 7. Pricing shadow + P&L convention (2026-09-09, post-audit decisions)
+
+Decisions taken after the 2026-09-08 portfolio audit (MLB section):
+
+- **Daily Unders Card rides its pre-registered rule to n≈100** (~mid-Oct).
+  September priced record: 5-10, **-6.41u at collected prices** (avg breakeven
+  57.4%; the -110-flat figure -5.45u is secondary). The card's Discord label
+  is RESEARCH ONLY (c74b109). The 9/8 card (4 plays) was pending at the
+  09-09 morning regrade; it resolves on the next pull+backtest.
+- **Standing P&L convention: units at collected prices.** `backtest.py` card
+  section and `pitcher_grading.daily_card_summary` now report priced units
+  from saved price_shadow (`priced_units`, `priced_n`, `priced_avg_breakeven_rate`);
+  `units_at_minus_110` is retained as the pre-registered rule's basis.
+- **Hot Hits pricing shadow built and live** (`hot-hits-price-shadow-v1`,
+  commit 49aa78a + 4430c8c): single-sided Bovada YES prices for "Player to
+  record a Hit" plus the 2+ Hits alt line, fetched per event via the
+  event-scoped coupon (`sources/bovada_props.py`), attached to production
+  candidates + top-40 research profiles. Validated live on the VM: 33/51
+  candidates priced, 144 quotes. Fail-open; env kill-switches
+  `HOT_HITS_INCLUDE_HIT_PRICES=false` and `HOT_HITS_HIT_PRICE_RESEARCH_LIMIT`.
+  `hot_hits_report.py` reports priced leg P&L for delivered cards.
+- Bovada event-coupon quirk: same endpoint alternates dict/list payload
+  shapes (4430c8c).
+- Game-markets schema-2 work (Action/FanDuel fallback) landed from the VM as
+  d2dfeed; VM synced to 4430c8c.
