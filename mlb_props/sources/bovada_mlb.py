@@ -165,7 +165,7 @@ def _normalize_coupon(parsed: Any) -> list:
     raise ValueError(f"unexpected payload type {type(parsed).__name__}")
 
 
-def fetch_mlb_payload(cache_dir: Path, refresh: bool = True) -> FetchResult:
+def fetch_mlb_payload(cache_dir: Path, refresh: bool = True, cache_bust: bool = False) -> FetchResult:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = cache_dir / "bovada_mlb.json"
     if not refresh:
@@ -179,7 +179,10 @@ def fetch_mlb_payload(cache_dir: Path, refresh: bool = True) -> FetchResult:
     for attempt in range(2):
         attempts = attempt + 1
         try:
-            text, status = _fetch_once(BOVADA_MLB_URL)
+            url = BOVADA_MLB_URL
+            if cache_bust:
+                url = f"{url}&_={int(time.time() * 1000)}"
+            text, status = _fetch_once(url)
             parsed = json.loads(text)
             coupon = _normalize_coupon(parsed)
             cache_path.write_text(text if coupon is parsed else json.dumps(coupon))
@@ -359,45 +362,34 @@ def fetch_game_markets(
     cache_dir: Path,
     screen_date: date,
     refresh: bool = True,
-) -> tuple[dict[tuple[str, str], Any], dict[str, Any]]:
+) -> tuple[dict[tuple[str, str, str], Any], dict[str, Any]]:
     """Fetch Bovada MLB lines keyed by (away_abbr, home_abbr).
 
     Returns (markets_by_key, diagnostics). Values are dicts shaped like
     GameMarketSnapshot inputs: moneyline/spread/total TwoWayPrice payloads.
     """
+    now = datetime.now(timezone.utc)
     coupon = fetch_mlb_payload(cache_dir, refresh=refresh)
     games, parse_diagnostics = parse_games(coupon.payload)
+    markets_by_key, stale_filtered, wrong_date_filtered, empty_markets_filtered = _filter_games(
+        games, screen_date, now
+    )
 
-    now = datetime.now(timezone.utc)
-    markets_by_key: dict[tuple[str, str], Any] = {}
-    stale_filtered: list[str] = []
-    wrong_date_filtered: list[str] = []
-    empty_markets_filtered: list[str] = []
-    for game in games:
-        label = f"{game.away_abbr} @ {game.home_abbr}"
-        kickoff = None
-        if game.start_time_utc:
-            try:
-                kickoff = datetime.fromisoformat(game.start_time_utc.replace("Z", "+00:00"))
-            except ValueError:
-                kickoff = None
-        if kickoff is None or kickoff <= now:
-            stale_filtered.append(label)
-            continue
-        local_date = kickoff.astimezone(EASTERN).date() if kickoff else None
-        if local_date is not None and local_date != screen_date:
-            wrong_date_filtered.append(label)
-            continue
-        markets = game.markets or {}
-        if not markets:
-            empty_markets_filtered.append(label)
-            continue
-        serialized = {name: market.as_dict() for name, market in markets.items()}
-        markets_by_key[(game.away_abbr, game.home_abbr)] = {
-            **game.as_dict(),
-            "moneyline": serialized.get("moneyline"),
-            "spread": serialized.get("spread"),
-            "total": serialized.get("total"),
+    stale_retry = {"performed": False}
+    if refresh and coupon.mode == "fresh" and games and len(stale_filtered) == len(games):
+        first_fetch = coupon.as_dict()
+        first_stale_games = list(stale_filtered)
+        coupon = fetch_mlb_payload(cache_dir, refresh=True, cache_bust=True)
+        games, parse_diagnostics = parse_games(coupon.payload)
+        markets_by_key, stale_filtered, wrong_date_filtered, empty_markets_filtered = _filter_games(
+            games, screen_date, now
+        )
+        stale_retry = {
+            "performed": True,
+            "reason": "all parsed games had already started",
+            "first_fetch": first_fetch,
+            "first_stale_games": first_stale_games,
+            "recovered_games": len(markets_by_key),
         }
 
     diagnostics = {
@@ -414,5 +406,44 @@ def fetch_game_markets(
         "wrong_date_games": wrong_date_filtered,
         "empty_market_games": empty_markets_filtered,
         "coupon_fetch": coupon.as_dict(),
+        "stale_coupon_retry": stale_retry,
     }
     return markets_by_key, diagnostics
+
+
+def _filter_games(
+    games: list[BovadaGame],
+    screen_date: date,
+    now: datetime,
+) -> tuple[dict[tuple[str, str, str], Any], list[str], list[str], list[str]]:
+    markets_by_key: dict[tuple[str, str, str], Any] = {}
+    stale_filtered: list[str] = []
+    wrong_date_filtered: list[str] = []
+    empty_markets_filtered: list[str] = []
+    for game in games:
+        label = f"{game.away_abbr} @ {game.home_abbr}"
+        kickoff = None
+        if game.start_time_utc:
+            try:
+                kickoff = datetime.fromisoformat(game.start_time_utc.replace("Z", "+00:00"))
+            except ValueError:
+                kickoff = None
+        if kickoff is None or kickoff <= now:
+            stale_filtered.append(label)
+            continue
+        if kickoff.astimezone(EASTERN).date() != screen_date:
+            wrong_date_filtered.append(label)
+            continue
+        markets = game.markets or {}
+        if not markets:
+            empty_markets_filtered.append(label)
+            continue
+        serialized = {name: market.as_dict() for name, market in markets.items()}
+        markets_by_key[(game.away_abbr, game.home_abbr, game.start_time_utc or "")] = {
+            **game.as_dict(),
+            "moneyline": serialized.get("moneyline"),
+            "spread": serialized.get("spread"),
+            "total": serialized.get("total"),
+            "source": "bovada",
+        }
+    return markets_by_key, stale_filtered, wrong_date_filtered, empty_markets_filtered

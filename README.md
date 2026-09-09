@@ -40,7 +40,7 @@ And a game-level market shadow collector (observation-only, no model opinions):
 - `backtest.py`: reconciles saved pitcher strikeout snapshots against actual MLB results
 - `scripts/run_pitcher_props_task.*`: Windows Task Scheduler wrappers for the daily pitcher board
 - `scripts/run_pitcher_props_backtest_task.*`: optional Windows Task Scheduler wrappers for daily pitcher backtests
-- `run_game_markets.py`: game-market shadow collector CLI (Bovada primary, ESPN cross-check)
+- `run_game_markets.py`: game-market shadow collector CLI (Bovada primary, Action/FanDuel cross-check and fallback)
 - `mlb_props/game_markets.py`: two-way price models and no-vig market-baseline math
 - `scripts/run_game_markets_task.*`: Windows Task Scheduler wrappers for the morning + evening shadow runs
 
@@ -52,15 +52,19 @@ a versioned price history now so that the future `game-ml` / `game-total`
 shadow models can be graded against a real market baseline from day one.
 
 - Sources: Bovada free coupon JSON API (`sources/bovada_mlb.py`, primary,
-  both-side American prices) with ESPN odds page cross-check
-  (`sources/espn_odds.py`, totals + run lines; curl User-Agent fallback for
-  its AWS WAF challenge). No Odds API usage or fees.
+  both-side American prices) with a bounded cache-busting retry when a fresh
+  response contains only started games. Action Network's public scoreboard
+  JSON (`sources/action_network.py`) supplies a FanDuel NJ cross-check and an
+  explicitly labeled fallback when Bovada has no matching game. No Odds API
+  usage or fees.
 - Market baseline: no-vig probabilities per game via
   `game_markets.market_baseline_payload` (home/away win, over/under).
 - History: `outputs/history/game_markets_*.json`, schema
-  `GAME_MARKETS_HISTORY_SCHEMA_VERSION = 1`, shadow version
-  `game-price-shadow-v1`. Coverage diagnostics per source are embedded in
-  every export.
+  `GAME_MARKETS_HISTORY_SCHEMA_VERSION = 2`, shadow version
+  `game-price-shadow-v1`, source policy
+  `bovada-primary-action-fanduel-fallback-v1`. Every game records its primary
+  source and any separate cross-check; coverage diagnostics per source are
+  embedded in every export.
 - Run locally: `DATA_MODE=live python3 run_game_markets.py`
   (add `EXPORT_HISTORY=true` to export).
 
@@ -80,8 +84,9 @@ Empty coverage still exits 0 (so the scheduled task is not marked failed)
 but now always writes a history file with source diagnostics. Treat those
 exports as unsuitable for evaluation. Bovada's prematch coupon can still
 list the previous night's unsettled games at 11:40 ET before today's slate
-is posted; the collector filters those as stale. ESPN is a cross-check only
-and does not supply moneylines, so it cannot fill a Bovada-empty morning.
+is posted; the collector filters those as stale and retries once through a
+cache-busting URL. If Bovada still has no matching line, Action/FanDuel can
+fill the snapshot without hiding the source change.
 
 ## Architecture notes
 

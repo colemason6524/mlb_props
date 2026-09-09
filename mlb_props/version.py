@@ -61,5 +61,6 @@ PITCHER_DAILY_CARD_POLICY_VERSION = "daily-unders-card-v1"
 # Game-level market shadow collection (moneyline / run line / game total).
 # History shape changes bump the schema version; the market baseline is an
 # observation-only no-vig conversion of collected prices, not a model opinion.
-GAME_MARKETS_HISTORY_SCHEMA_VERSION = 1
+GAME_MARKETS_HISTORY_SCHEMA_VERSION = 2
 GAME_MARKETS_PRICE_SHADOW_VERSION = "game-price-shadow-v1"
+GAME_MARKETS_SOURCE_POLICY_VERSION = "bovada-primary-action-fanduel-fallback-v1"

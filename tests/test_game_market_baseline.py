@@ -70,11 +70,13 @@ class NoVigTests(unittest.TestCase):
 
 
 class SnapshotSerializationTests(unittest.TestCase):
-    def test_as_dict_includes_espn_cross_check(self) -> None:
+    def test_as_dict_includes_action_cross_check(self) -> None:
         snapshot = _snapshot(TwoWayPrice(None, -150, 130), total=TwoWayPrice(8.5, -110, -110))
-        snapshot.espn_total = 8.5
+        snapshot.cross_check_source = "action_network_fanduel_nj"
+        snapshot.cross_check_total = TwoWayPrice(8.5, -105, -115)
         data = snapshot.as_dict()
-        self.assertEqual(data["espn_cross_check"]["total"], 8.5)
+        self.assertEqual(data["cross_check"]["source"], "action_network_fanduel_nj")
+        self.assertEqual(data["cross_check"]["total"]["line"], 8.5)
         self.assertEqual(data["moneyline"]["price_a"], -150)
         self.assertEqual(data["total"]["line"], 8.5)
 

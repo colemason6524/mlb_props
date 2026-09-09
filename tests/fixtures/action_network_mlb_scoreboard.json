@@ -1,0 +1,52 @@
+{
+  "games": [
+    {
+      "id": 294741,
+      "start_time": "2026-09-08T00:10:00.000Z",
+      "away_team_id": 100,
+      "home_team_id": 101,
+      "teams": [
+        {"id": 100, "abbr": "STL"},
+        {"id": 101, "abbr": "SFG"}
+      ],
+      "odds": [
+        {"book_id": 15, "ml_away": 111, "ml_home": -135},
+        {
+          "book_id": 69,
+          "inserted": "2026-09-07T20:40:00+00:00",
+          "ml_away": 114,
+          "ml_home": -134,
+          "spread_away": 1.5,
+          "spread_away_line": -194,
+          "spread_home": -1.5,
+          "spread_home_line": 102,
+          "total": 7.5,
+          "over": -124,
+          "under": 102
+        }
+      ]
+    },
+    {
+      "id": 294740,
+      "start_time": "2026-09-07T19:10:00.000Z",
+      "away_team_id": 102,
+      "home_team_id": 103,
+      "teams": [
+        {"id": 102, "abbr": "WSH"},
+        {"id": 103, "abbr": "SD"}
+      ],
+      "odds": [{"book_id": 69, "ml_away": 170, "ml_home": -205}]
+    },
+    {
+      "id": 294800,
+      "start_time": "2026-09-09T23:10:00.000Z",
+      "away_team_id": 104,
+      "home_team_id": 105,
+      "teams": [
+        {"id": 104, "abbr": "ARI"},
+        {"id": 105, "abbr": "KCR"}
+      ],
+      "odds": [{"book_id": 69, "ml_away": 100, "ml_home": -120}]
+    }
+  ]
+}

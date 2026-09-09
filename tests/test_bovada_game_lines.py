@@ -251,10 +251,10 @@ class FetchGameMarketsTests(unittest.TestCase):
             cache_dir = Path(tmp)
             self._write_coupon(cache_dir, [event])
             markets, diagnostics = fetch_game_markets(cache_dir, screen_date, refresh=False)
-        self.assertIn(("NYY", "BOS"), markets)
+        self.assertTrue(any(key[:2] == ("NYY", "BOS") for key in markets))
         self.assertEqual(diagnostics["stale_games_filtered"], 0)
         self.assertEqual(diagnostics["wrong_date_games_filtered"], 0)
-        self.assertIsNotNone(markets[("NYY", "BOS")]["moneyline"])
+        self.assertIsNotNone(next(iter(markets.values()))["moneyline"])
 
     def test_future_wrong_date_is_filtered(self) -> None:
         kickoff = datetime.now(timezone.utc) + timedelta(hours=48)
@@ -291,6 +291,28 @@ class FetchGameMarketsTests(unittest.TestCase):
         self.assertEqual(diagnostics["events_seen"], 1)
         self.assertGreaterEqual(diagnostics["stale_games_filtered"], 1)
         self.assertEqual(diagnostics["coupon_fetch"]["mode"], "cache")
+
+    def test_all_stale_fresh_coupon_retries_with_cache_buster(self) -> None:
+        stale = _event()
+        stale["startTime"] = int((datetime.now(timezone.utc) - timedelta(hours=1)).timestamp() * 1000)
+        future = _event()
+        kickoff = datetime.now(timezone.utc) + timedelta(hours=2)
+        future["startTime"] = int(kickoff.timestamp() * 1000)
+        screen_date = kickoff.astimezone(ZoneInfo("America/New_York")).date()
+        responses = [
+            (json.dumps([{"events": [stale]}]), 200),
+            (json.dumps([{"events": [future]}]), 200),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("mlb_props.sources.bovada_mlb._fetch_once", side_effect=responses) as mock_fetch:
+                markets, diagnostics = fetch_game_markets(Path(tmp), screen_date, refresh=True)
+
+        self.assertTrue(any(key[:2] == ("NYY", "BOS") for key in markets))
+        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertNotIn("_=", mock_fetch.call_args_list[0].args[0])
+        self.assertIn("_=", mock_fetch.call_args_list[1].args[0])
+        self.assertTrue(diagnostics["stale_coupon_retry"]["performed"])
+        self.assertEqual(diagnostics["stale_coupon_retry"]["recovered_games"], 1)
 
 
 if __name__ == "__main__":

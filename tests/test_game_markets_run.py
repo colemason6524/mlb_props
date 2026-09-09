@@ -9,10 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from mlb_props.models import Game
+from mlb_props.sources.action_network import FANDUEL_SOURCE
 from run_game_markets import (
     _run,
+    build_snapshot,
+    format_action_diagnostics,
     format_bovada_diagnostics,
-    format_espn_diagnostics,
+    market_entry_for_game,
 )
 
 
@@ -61,17 +64,15 @@ class EmptyCoverageRunTests(unittest.TestCase):
             outputs_dir = tmp_path / "outputs"
             fake_slate = MagicMock()
             fake_slate.fetch_games.return_value = [_slate_game()]
-            fake_espn = MagicMock()
-            fake_espn.fetch_game_context.return_value = (
-                {},
-                {"mode": "fresh", "games_parsed": 13, "with_total": 13, "with_spreads": 13},
-            )
             with (
                 patch("run_game_markets.load_settings", return_value=_settings(tmp_path)),
                 patch("run_game_markets.CACHE_DIR", cache_dir),
                 patch("run_game_markets.OUTPUTS_DIR", outputs_dir),
                 patch("run_game_markets.fetch_game_markets", return_value=({}, leftovers)),
-                patch("run_game_markets.EspnMlbOddsSource", return_value=fake_espn),
+                patch(
+                    "run_game_markets.fetch_action_markets",
+                    return_value=({}, {"mode": "fresh", "games_seen": 1}),
+                ),
                 patch(
                     "mlb_props.sources.mlb_stats_api.MlbStatsApiSlateSource",
                     return_value=fake_slate,
@@ -108,10 +109,83 @@ class EmptyCoverageRunTests(unittest.TestCase):
         self.assertIn("current-day=0", text)
         self.assertIn("HOU @ NYY", text)
 
-    def test_format_espn_diagnostics_includes_mode(self) -> None:
-        text = format_espn_diagnostics({"mode": "fresh", "games_parsed": 13, "with_total": 13, "with_spreads": 13})
+    def test_format_action_diagnostics_includes_mode(self) -> None:
+        text = format_action_diagnostics(
+            {"mode": "fresh", "games_seen": 13, "pregame_games": 10, "games_with_fanduel": 10}
+        )
         self.assertIn("mode=fresh", text)
-        self.assertIn("parsed=13", text)
+        self.assertIn("games=13", text)
+
+    def test_action_fanduel_is_labeled_fallback_when_bovada_is_empty(self) -> None:
+        action_entry = {
+            "source": FANDUEL_SOURCE,
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "moneyline": {"line": None, "price_a": -125, "price_b": 105},
+            "spread": {"line": -1.5, "price_a": 155, "price_b": -180},
+            "total": {"line": 8.5, "price_a": -110, "price_b": -110},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fake_slate = MagicMock()
+            fake_slate.fetch_games.return_value = [_slate_game()]
+            with (
+                patch("run_game_markets.load_settings", return_value=_settings(tmp_path)),
+                patch("run_game_markets.CACHE_DIR", tmp_path / "cache"),
+                patch("run_game_markets.OUTPUTS_DIR", tmp_path / "outputs"),
+                patch("run_game_markets.fetch_game_markets", return_value=({}, {})),
+                patch(
+                    "run_game_markets.fetch_action_markets",
+                    return_value=(
+                        {("CIN", "CHC", action_entry["start_time_utc"]): action_entry},
+                        {"mode": "fresh"},
+                    ),
+                ),
+                patch(
+                    "mlb_props.sources.mlb_stats_api.MlbStatsApiSlateSource",
+                    return_value=fake_slate,
+                ),
+            ):
+                exit_code, _ = _run()
+
+            history_file = next((tmp_path / "outputs" / "history").glob("game_markets_*.json"))
+            payload = json.loads(history_file.read_text())
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["history_schema_version"], 2)
+        self.assertEqual(payload["coverage"]["action_fanduel_fallback"], 1)
+        self.assertEqual(payload["games"][0]["source"], FANDUEL_SOURCE)
+        self.assertIsNone(payload["games"][0]["cross_check"]["source"])
+
+    def test_bovada_remains_primary_and_action_is_cross_check(self) -> None:
+        bovada = {
+            "source": "bovada",
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "moneyline": {"line": None, "price_a": -120, "price_b": 100},
+            "spread": {"line": -1.5, "price_a": 150, "price_b": -175},
+            "total": {"line": 8.0, "price_a": -105, "price_b": -115},
+        }
+        action = {
+            "source": FANDUEL_SOURCE,
+            "source_updated_at": "2026-08-28T20:00:00+00:00",
+            "moneyline": {"line": None, "price_a": -125, "price_b": 105},
+            "spread": {"line": -1.5, "price_a": 155, "price_b": -180},
+            "total": {"line": 8.5, "price_a": -110, "price_b": -110},
+        }
+        snapshot = build_snapshot(_slate_game(), bovada, action)
+        self.assertEqual(snapshot.source, "bovada")
+        self.assertEqual(snapshot.total.line, 8.0)
+        self.assertEqual(snapshot.cross_check_source, FANDUEL_SOURCE)
+        self.assertEqual(snapshot.cross_check_total.line, 8.5)
+        self.assertEqual(snapshot.cross_check_updated_at, "2026-08-28T20:00:00+00:00")
+
+    def test_doubleheader_market_is_matched_by_nearest_start_time(self) -> None:
+        game = _slate_game()
+        early = {"start_time_utc": "2026-08-28T17:05:00+00:00", "source": "bovada"}
+        late = {"start_time_utc": "2026-08-28T23:04:00+00:00", "source": "bovada"}
+        markets = {
+            ("CIN", "CHC", early["start_time_utc"]): early,
+            ("CIN", "CHC", late["start_time_utc"]): late,
+        }
+        self.assertIs(market_entry_for_game(markets, game), late)
 
 
 

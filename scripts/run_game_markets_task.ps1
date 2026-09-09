@@ -9,7 +9,7 @@ param(
 
 # Game-level market shadow collector (moneyline / run line / game total).
 # Observation-only: no Discord, no model opinions. It snapshots Bovada +
-# ESPN lines and exports versioned history for later grading.
+# Action Network/FanDuel cross-check lines and exports versioned history for later grading.
 
 $PSNativeCommandUseErrorActionPreference = $false
 $ErrorActionPreference = "Stop"

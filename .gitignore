@@ -1,10 +1,12 @@
 .cache/
+.venv/
 .pycache/
 __pycache__/
 *.py[cod]
 .DS_Store
 .env
 outputs/
+logs/
 .analysis/
 *.zip
 hot_hits_from_windows/

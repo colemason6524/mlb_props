@@ -44,9 +44,12 @@ class GameMarketSnapshot:
     spread: TwoWayPrice | None
     total: TwoWayPrice | None
     source: str
-    espn_total: float | None = None
-    espn_away_spread: float | None = None
-    espn_home_spread: float | None = None
+    source_updated_at: str | None = None
+    cross_check_source: str | None = None
+    cross_check_updated_at: str | None = None
+    cross_check_moneyline: TwoWayPrice | None = None
+    cross_check_spread: TwoWayPrice | None = None
+    cross_check_total: TwoWayPrice | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -59,10 +62,13 @@ class GameMarketSnapshot:
             "spread": self.spread.as_dict() if self.spread else None,
             "total": self.total.as_dict() if self.total else None,
             "source": self.source,
-            "espn_cross_check": {
-                "total": self.espn_total,
-                "away_spread": self.espn_away_spread,
-                "home_spread": self.espn_home_spread,
+            "source_updated_at": self.source_updated_at,
+            "cross_check": {
+                "source": self.cross_check_source,
+                "source_updated_at": self.cross_check_updated_at,
+                "moneyline": self.cross_check_moneyline.as_dict() if self.cross_check_moneyline else None,
+                "spread": self.cross_check_spread.as_dict() if self.cross_check_spread else None,
+                "total": self.cross_check_total.as_dict() if self.cross_check_total else None,
             },
         }
 
