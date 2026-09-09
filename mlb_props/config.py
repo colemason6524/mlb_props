@@ -191,6 +191,8 @@ class HotHitsThresholds:
     max_batters_per_team: int = 9
     include_bvp: bool = True
     include_contact_quality_shadow: bool = True
+    include_hit_price_shadow: bool = True
+    hit_price_research_pool_limit: int = 40
     research_min_season_avg: float = 0.230
     research_min_avg_last_10: float = 0.240
     research_min_avg_last_5: float = 0.300
@@ -279,6 +281,13 @@ def load_settings() -> Settings:
                 "HOT_HITS_INCLUDE_CONTACT_SHADOW",
                 "true",
             ).strip().lower() not in {"0", "false", "no"},
+            include_hit_price_shadow=os.environ.get(
+                "HOT_HITS_INCLUDE_HIT_PRICES",
+                "true",
+            ).strip().lower() not in {"0", "false", "no"},
+            hit_price_research_pool_limit=int(
+                os.environ.get("HOT_HITS_HIT_PRICE_RESEARCH_LIMIT", "40")
+            ),
             research_min_season_avg=float(
                 os.environ.get("HOT_HITS_RESEARCH_MIN_SEASON_AVG", "0.230")
             ),

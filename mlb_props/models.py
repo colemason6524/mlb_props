@@ -206,6 +206,32 @@ class HotHitConfidenceEstimate:
 
 
 @dataclass(frozen=True)
+class HotHitPriceShadow:
+    """Single-sided Bovada YES price for a batter hit market.
+
+    Observation-only research price for the Hot Hits pricing shadow. Bovada
+    lists only the YES side for "Player to record a Hit", so the implied
+    probability is vig-inclusive and conservative: it can overstate the
+    market's fair probability but never understate it.
+    """
+
+    version: str
+    screen_date: str
+    bookmaker: str
+    source: str
+    market: str  # "hit_yes"
+    price: int
+    implied_probability: float
+    alt_market: str  # "hits_2plus_yes"
+    alt_price: int | None
+    alt_implied_probability: float | None
+    event_slug: str
+    collected_at: str
+    matched_by: str = "name_team"
+    flags: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class RecencyProjectionShadow:
     version: str
     screen_date: str
@@ -378,6 +404,7 @@ class HotHitCandidate:
     current_display_qualified: bool = True
     gate_failures: list[str] = field(default_factory=list)
     confidence_estimate: HotHitConfidenceEstimate | None = None
+    price_shadow: HotHitPriceShadow | None = None
 
 
 @dataclass

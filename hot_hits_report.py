@@ -69,6 +69,67 @@ class GradedHotHit:
     confidence_label: str | None
     confidence_reliability: float | None
     confidence_model_version: str | None
+    price_hit_yes: int | None
+    price_hits_2plus_yes: int | None
+
+
+def hit_leg_priced_units(rows: list[GradedHotHit]) -> dict:
+    """Priced P&L for delivered card legs at their collected YES prices.
+
+    Uses the saved hot-hits price shadow (single-sided Bovada "to record a
+    Hit" YES price). A winning leg pays the American payout; a losing leg
+    loses 1 unit. Legs without a recorded price are excluded from units but
+    counted so the priced sample size stays visible. This is the
+    collected-price P&L convention: -110-flat is not used here.
+    """
+    graded = [
+        row
+        for row in rows
+        if row.discord_rank is not None
+        and row.price_hit_yes is not None
+        and row.result in {"hit", "miss"}
+    ]
+    priced = 0.0
+    wins = 0
+    for row in graded:
+        price = int(row.price_hit_yes)
+        if row.result == "hit":
+            priced += (price / 100.0) if price > 0 else (100.0 / abs(price))
+            wins += 1
+        else:
+            priced -= 1.0
+    return {
+        "legs": len(graded),
+        "wins": wins,
+        "units": priced,
+        "unpriced_delivered_legs": sum(
+            1
+            for row in rows
+            if row.discord_rank is not None
+            and row.price_hit_yes is None
+            and row.result in {"hit", "miss"}
+        ),
+    }
+
+
+def _priced_units_summary_lines(rows: list[GradedHotHit]) -> list[str]:
+    summary = hit_leg_priced_units(rows)
+    if summary["legs"] == 0 and summary["unpriced_delivered_legs"] == 0:
+        return []
+    lines = ["Delivered leg priced P&L (collected Bovada hit-YES prices):"]
+    if summary["legs"]:
+        hit_rate = summary["wins"] / summary["legs"] * 100
+        lines.append(
+            f"- {summary['wins']}/{summary['legs']} ({hit_rate:.1f}%) priced legs, "
+            f"{summary['units']:+.2f}u at collected prices"
+        )
+    else:
+        lines.append("- No priced delivered legs yet.")
+    if summary["unpriced_delivered_legs"]:
+        lines.append(
+            f"- {summary['unpriced_delivered_legs']} delivered legs had no recorded price."
+        )
+    return lines
 
 
 def parse_args() -> argparse.Namespace:
@@ -321,9 +382,22 @@ def grade_history_files(
                     else None
                 ),
                 confidence_model_version=confidence.get("version"),
+                price_hit_yes=_price_int(row, "price"),
+                price_hits_2plus_yes=_price_int(row, "alt_price"),
             )
         )
     return graded
+
+
+def _price_int(row: dict, key: str) -> int | None:
+    shadow = row.get("price_shadow")
+    if not isinstance(shadow, dict):
+        return None
+    value = shadow.get(key)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def current_hot_hit_score(row: dict) -> int:
@@ -614,6 +688,10 @@ def render_report(
 
     lines.extend(["", "Parlay Outcomes"])
     lines.extend(_parlay_outcome_lines(rows))
+    priced_lines = _priced_units_summary_lines(rows)
+    if priced_lines:
+        lines.extend(["", "Priced Leg P&L"])
+        lines.extend(priced_lines)
 
     confidence_rows = [
         row for row in final_rows if row.confidence_percentage is not None

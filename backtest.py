@@ -1337,6 +1337,63 @@ def _render_unresolved_breakdown(rows: list[UnresolvedPrediction], max_examples:
     return lines
 
 
+def _card_priced_summary(
+    card_predictions: list[dict],
+    resolved_card: list[ResolvedPrediction],
+) -> dict | None:
+    """Priced P&L for graded card rows at their collected under prices.
+
+    Matches saved card payload rows (which carry price_shadow) to resolved
+    outcomes by (screen_date, pitcher, team). Payouts use the collected
+    American under price; unpriced rows are excluded from units and counted.
+    """
+    outcomes: dict[tuple[str, str, str], str] = {}
+    for row in resolved_card:
+        if row.outcome not in ("win", "loss"):
+            continue
+        outcomes[(str(row.screen_date), row.pitcher_name, row.team)] = row.outcome
+    if not outcomes:
+        return None
+
+    priced_n = 0
+    priced_wins = 0
+    units = 0.0
+    breakevens: list[float] = []
+    for prediction in card_predictions:
+        key = (
+            str(prediction.get("screen_date", "")),
+            str(prediction.get("subject_name", "")),
+            str(prediction.get("team", "")),
+        )
+        outcome = outcomes.get(key)
+        if outcome is None:
+            continue
+        shadow = prediction.get("price_shadow")
+        price = shadow.get("under_price") if isinstance(shadow, dict) else None
+        try:
+            numeric = float(price) if price is not None else None
+        except (TypeError, ValueError):
+            numeric = None
+        if numeric is None or numeric == 0:
+            continue
+        payout = (numeric / 100.0) if numeric > 0 else (100.0 / abs(numeric))
+        priced_n += 1
+        breakevens.append(1.0 / (1.0 + payout))
+        if outcome == "win":
+            priced_wins += 1
+            units += payout
+        else:
+            units -= 1.0
+    if not priced_n:
+        return None
+    return {
+        "n": priced_n,
+        "wins": priced_wins,
+        "units": units,
+        "avg_breakeven": mean(breakevens),
+    }
+
+
 def _render_daily_card_section(
     card_predictions: list[dict],
     resolved_card: list[ResolvedPrediction],
@@ -1355,12 +1412,19 @@ def _render_daily_card_section(
     wins = sum(1 for row in graded if row.outcome == "win")
     losses = len(graded) - wins
     pushes = sum(1 for row in resolved_card if row.outcome == "push")
+    priced_summary = _card_priced_summary(card_predictions, resolved_card)
     lines = ["Daily Card (pre-registered research policy; not Core/Lean/Watch):"]
     lines.append(f"- Card plays loaded: {len(card_predictions)}")
     lines.append(f"- Card plays graded: {len(graded)} ({wins}-{losses})")
     if graded:
         lines.append(f"- Card hit rate: {(wins / len(graded)) * 100:.1f}%")
         lines.append(f"- Card flat units at -110: {wins * (100 / 110) - losses:+.2f}")
+    if priced_summary:
+        lines.append(
+            f"- Card priced P&L at collected prices: {priced_summary['units']:+.2f}u "
+            f"(n={priced_summary['n']}, wins {priced_summary['wins']}, "
+            f"avg breakeven {(priced_summary['avg_breakeven'] * 100):.1f}%)"
+        )
     lines.append(
         f"- Card pushes: {pushes}; voids: {len(voided_card)}; "
         f"unresolved: {len(unresolved_card)}; pending: {pending}"

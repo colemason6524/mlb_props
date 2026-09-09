@@ -952,13 +952,77 @@ def units_at_minus_110(wins: int, losses: int) -> float:
     return wins * (100 / 110) - losses
 
 
+def american_payout(price: int | float | None) -> float | None:
+    """Positive-American decimal payout per 1 unit staked; None when unpriced."""
+    if price is None:
+        return None
+    try:
+        numeric = float(price)
+    except (TypeError, ValueError):
+        return None
+    if numeric == 0:
+        return None
+    return (numeric / 100.0) if numeric > 0 else (100.0 / abs(numeric))
+
+
+def american_breakeven_rate(price: int | float | None) -> float | None:
+    """Win rate needed to break even at the given American price."""
+    payout = american_payout(price)
+    if payout is None:
+        return None
+    return 1.0 / (1.0 + payout)
+
+
+def priced_card_units(card_rows: list[GradedCandidate]) -> dict:
+    """P&L for graded card rows at their collected UNDER prices (price-shadow).
+
+    The collected-price convention: winning legs pay the actual American
+    payout of the recorded under_price, losing legs lose 1 unit. Rows without
+    a recorded price are excluded from units and counted separately so the
+    priced sample size stays visible.
+    """
+    priced_n = 0
+    priced_wins = 0
+    units = 0.0
+    breakevens: list[float] = []
+    for row in card_rows:
+        if row.outcome not in ("win", "loss"):
+            continue
+        price = ((row.price_shadow or {}).get("under_price"))
+        payout = american_payout(price)
+        if payout is None:
+            continue
+        priced_n += 1
+        breakevens.append(american_breakeven_rate(price))
+        if row.outcome == "win":
+            priced_wins += 1
+            units += payout
+        else:
+            units -= 1.0
+    return {
+        "priced_n": priced_n,
+        "priced_wins": priced_wins,
+        "priced_units": units if priced_n else 0.0,
+        "priced_avg_breakeven_rate": (mean(breakevens) if breakevens else None),
+        "unpriced_graded_rows": sum(
+            1
+            for row in card_rows
+            if row.outcome in ("win", "loss")
+            and american_payout((row.price_shadow or {}).get("under_price")) is None
+        ),
+    }
+
+
 def daily_card_summary(history: GradedHistory) -> dict:
     """Summarize graded Daily Card rows against the always-under candidate baseline.
 
     The card rows must already be resolved (outcome set by resolve_candidates).
     The baseline is every resolved UNDER-side candidate from the same snapshots,
     regardless of line or edge, because the pre-registered success rule asks
-    whether the card's segment gates beat simply taking unders.
+    whether the card's segment gates beat simply taking unders. Priced units
+    use each row's collected under price (the standing P&L convention);
+    units_at_minus_110 is retained as the pre-registered rule's historical
+    basis.
     """
     card_rows = history.daily_card
     graded = [row for row in card_rows if row.outcome in ("win", "loss")]
@@ -990,6 +1054,7 @@ def daily_card_summary(history: GradedHistory) -> dict:
         ),
         "hit_rate": (wins / len(graded)) if graded else None,
         "units_at_minus_110": units_at_minus_110(wins, losses) if graded else None,
+        **priced_card_units(card_rows),
         "baseline_rows": len(baseline_rows),
         "baseline_hit_rate": (baseline_wins / len(baseline_rows)) if baseline_rows else None,
         "policy_version": str(

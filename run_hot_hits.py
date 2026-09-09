@@ -15,6 +15,10 @@ from mlb_props.hot_hits_confidence import (
     hot_hit_confidence_sort_key,
 )
 from mlb_props.hot_hits_policy import hot_hit_tier, select_hot_hits_card
+from mlb_props.hot_hits_price_shadow import (
+    HOT_HITS_PRICE_SHADOW_VERSION,
+    attach_hit_price_shadow,
+)
 from mlb_props.notifiers.discord import send_discord_embeds
 from mlb_props.output import (
     render_hot_hit_candidates,
@@ -191,6 +195,31 @@ def main() -> int:
         reverse=True,
     )
 
+    price_shadow_metadata = {
+        "version": HOT_HITS_PRICE_SHADOW_VERSION,
+        "status": "disabled",
+        "screen_date": settings.screen_date.isoformat(),
+        "requested_candidates": 0,
+        "matched_candidates": 0,
+        "quotes_found": 0,
+        "diagnostics": {},
+        "error": None,
+    }
+    if settings.hot_hits_thresholds.include_hit_price_shadow:
+        price_targets = list(candidates)
+        price_targets += [
+            profile
+            for profile in confidence_ranked
+            if profile not in candidates
+        ][: max(0, settings.hot_hits_thresholds.hit_price_research_pool_limit)]
+        price_shadow_metadata = attach_hit_price_shadow(
+            candidates=price_targets,
+            games=games,
+            screen_date=settings.screen_date,
+            cache_dir=CACHE_DIR / "lines",
+            ttl_hours=settings.lines_cache_ttl_minutes / 60.0,
+        )
+
     print(render_hot_hit_candidates(candidates, limit=settings.display_limit))
     print("")
     print(render_hot_hit_confidence_research(confidence_ranked, limit=settings.display_limit))
@@ -214,6 +243,19 @@ def main() -> int:
             f"({contact_quality_metadata['profiles_available']}/"
             f"{contact_quality_metadata['requested_candidates']} profiles, "
             f"through {contact_quality_metadata['as_of_date']})"
+        )
+    price_status = price_shadow_metadata["status"]
+    if price_status == "source_failed":
+        print(f"- Hit-price shadow: source failed ({price_shadow_metadata['error']})")
+    elif price_status == "disabled":
+        print("- Hit-price shadow: disabled")
+    else:
+        print(
+            "- Hit-price shadow: "
+            f"{price_status} "
+            f"({price_shadow_metadata['matched_candidates']}/"
+            f"{price_shadow_metadata['requested_candidates']} candidates priced, "
+            f"{price_shadow_metadata['quotes_found']} book quotes)"
         )
 
     card_settings = settings.hot_hits_thresholds
@@ -259,6 +301,7 @@ def main() -> int:
                     "hot_hits_thresholds": asdict(settings.hot_hits_thresholds),
                 },
                 "contact_quality_shadow": contact_quality_metadata,
+                "hit_price_shadow": price_shadow_metadata,
                 "hot_hits_confidence": confidence_metadata,
                 "discord_delivery": {
                     "status": discord_status,
