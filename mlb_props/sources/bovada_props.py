@@ -77,17 +77,22 @@ def _fetch_text(url: str) -> str:
         return response.read().decode("utf-8", "replace")
 
 
-def _fetch_event_payload(slug: str) -> dict:
-    """Fetch one event coupon with one bounded retry on transient failures."""
+def _fetch_event_payload(slug: str) -> dict | list:
+    """Fetch one event coupon with one bounded retry on transient failures.
+
+    Bovada alternates response shapes for the same endpoint: sometimes the
+    bare display-group dictionary, sometimes the league-group list wrapper.
+    Both are accepted; the display-group walker recurses through either.
+    """
     url = EVENT_COUPON_URL.format(slug=slug)
     last_error: Exception | None = None
     for attempt in range(2):
         try:
             text = _fetch_text(url)
             parsed = json.loads(text)
-            if not isinstance(parsed, dict):
-                raise ValueError(f"unexpected event payload type {type(parsed).__name__}")
-            return parsed
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            raise ValueError(f"unexpected event payload type {type(parsed).__name__}")
         except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
             last_error = exc
             if isinstance(exc, HTTPError) and exc.code != 429 and exc.code < 500:
