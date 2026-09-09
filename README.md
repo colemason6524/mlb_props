@@ -383,6 +383,10 @@ Provisional Hot Hits labels are:
 
 The confidence research board appears only in terminal output and history. It does not affect raw score, production qualification, Core/Value/Thin tier, Discord eligibility, card order, or Discord content. The percentage is price-independent, capped to `45-88%` while provisional, and is not a claim of calibration, betting value, or expected return. Collect and grade a materially larger normal-slate sample before changing production selection.
 
+#### Hit-price shadow (added 2026-09-09)
+
+`hot-hits-price-shadow-v1` records single-sided Bovada YES prices for "Player to record a Hit" plus the "2+ Hits" alt line for each production candidate and the top-40 confidence-ranked research profiles. Prices come from the event-scoped Bovada coupon (`sources/bovada_props.py`) and attach after confidence, mirroring the contact-shadow contract: fail-open, never affecting score, tier, card, or Discord. The YES side is priced alone, so implied probabilities are vig-inclusive and conservative. `hot_hits_report.py` grades delivered legs at their collected prices (the standing P&L convention). Set `HOT_HITS_INCLUDE_HIT_PRICES=false` to disable, or `HOT_HITS_HIT_PRICE_RESEARCH_LIMIT` to change the research-pool cap.
+
 ## Environment variables
 
 ```bash
