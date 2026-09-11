@@ -461,21 +461,80 @@ def append_jsonl(path: Path, rows: list[dict], key: tuple[str, str]) -> int:
 # ----------------------------------------------------------------- render
 
 
+DISPLAY_SECTIONS = (
+    ("pitcher_k", "Pitcher Strikeouts"),
+    ("game_ml", "Moneyline"),
+    ("game_rl", "Run Line"),
+    ("game_total", "Totals"),
+)
+
+
+def display_pick_label(row: dict) -> str | None:
+    """Human-readable selected side: a team name, Over/Under, or the raw pick."""
+    family = row.get("family")
+    pick = row.get("pick")
+    if family == "game_ml":
+        name = row.get("home_team") if pick == "home" else row.get("away_team")
+        return name or pick
+    if family == "game_rl":
+        name = row.get("home_team") if pick == "home_covers" else row.get("away_team")
+        return name or pick
+    if family == "game_total":
+        return "Over" if pick == "over" else "Under"
+    return pick
+
+
+def display_line(row: dict) -> object | None:
+    """Line as seen from the selected side (away run lines flip sign)."""
+    line = row.get("line")
+    if line is None:
+        return None
+    if row.get("family") == "game_rl" and row.get("pick") == "away_covers":
+        try:
+            return -float(line)
+        except (TypeError, ValueError):
+            return line
+    return line
+
+
+def group_rows_for_display(sections: dict[str, list[dict]]) -> list[tuple[str, list[dict]]]:
+    groups: dict[str, list[dict]] = {key: [] for key, _ in DISPLAY_SECTIONS}
+    for family, rows in sections.items():
+        for row in rows:
+            key = row.get("family") or family
+            groups.setdefault(key, []).append(row)
+    ordered = [
+        (label, groups[key]) for key, label in DISPLAY_SECTIONS if groups.get(key)
+    ]
+    extra_keys = set(groups) - {key for key, _ in DISPLAY_SECTIONS}
+    for key in sorted(extra_keys):
+        if groups[key]:
+            ordered.append((key, groups[key]))
+    return ordered
+
+
 def render_board_text(screen: str, sections: dict[str, list[dict]], slot: str | None = None) -> str:
     header = f"MLB Forecast Board - {screen}"
     if slot in SLOT_LABELS:
         header = f"{header} ({SLOT_LABELS[slot]})"
     lines = [header, ""]
-    for family, rows in sections.items():
-        lines.append(f"== {family} ({len(rows)}) ==")
+    for label, rows in group_rows_for_display(sections):
+        lines.append(f"== {label} ({len(rows)}) ==")
         for row in sorted(rows, key=lambda r: r.get("p_pick") or 0.0, reverse=True)[:40]:
             price = row.get("price")
             price_txt = f" @{price:+d}" if isinstance(price, int) else " (unpriced)"
             ev = row.get("ev")
             ev_txt = f"EV {ev:+.2f}" if ev is not None else "EV n/a"
-            line_txt = f" {row.get('line')}" if row.get("line") is not None else ""
+            pick_label = display_pick_label(row)
+            line = display_line(row)
+            if line is None:
+                line_txt = ""
+            elif row.get("family") == "game_rl":
+                line_txt = f" {float(line):+g}"
+            else:
+                line_txt = f" {line}"
             lines.append(
-                f"- {row.get('subject')} | {row.get('pick')}{line_txt}{price_txt} | "
+                f"- {row.get('subject')} | {pick_label}{line_txt}{price_txt} | "
                 f"p={row.get('p_pick'):.0%} | {ev_txt} [{row.get('ev_flag')}]"
             )
         lines.append("")

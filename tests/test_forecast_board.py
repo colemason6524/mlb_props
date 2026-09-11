@@ -111,9 +111,32 @@ class RenderTests(unittest.TestCase):
             ]
         }
         text = render_board_text("2026-09-08", sections)
-        self.assertIn("pitcher_k (2)", text)
+        self.assertIn("Pitcher Strikeouts (2)", text)
         self.assertLess(text.index("High"), text.index("Low"))
         self.assertIn("EV n/a", render_board_text("d", {"b": [{"subject": "X", "pick": "hit", "line": None, "p_pick": 0.6, "price": None, "ev": None, "ev_flag": "unpriced"}]}))
+
+    def test_game_markets_split_into_readable_sections(self) -> None:
+        sections = {
+            "game": [
+                {"family": "game_ml", "subject": "New York Mets @ New York Yankees",
+                 "pick": "home", "home_team": "New York Yankees", "away_team": "New York Mets",
+                 "line": None, "p_pick": 0.61, "price": -155, "ev": 0.08, "ev_flag": "playable"},
+                {"family": "game_rl", "subject": "New York Mets @ New York Yankees",
+                 "pick": "away_covers", "home_team": "New York Yankees", "away_team": "New York Mets",
+                 "line": -1.5, "p_pick": 0.58, "price": -180, "ev": 0.24, "ev_flag": "playable"},
+                {"family": "game_total", "subject": "New York Mets @ New York Yankees",
+                 "pick": "under", "home_team": "New York Yankees", "away_team": "New York Mets",
+                 "line": 8.0, "p_pick": 0.63, "price": -105, "ev": 0.22, "ev_flag": "playable"},
+            ]
+        }
+        text = render_board_text("2026-09-11", sections)
+        self.assertIn("Moneyline (1)", text)
+        self.assertIn("Run Line (1)", text)
+        self.assertIn("Totals (1)", text)
+        self.assertIn("New York Yankees @-155", text)
+        self.assertIn("New York Mets +1.5 @-180", text)
+        self.assertNotIn("away_covers", text)
+        self.assertIn("Under 8.0 @-105", text)
 
     def test_chunks_respect_limit(self) -> None:
         text = "\n".join(f"line {i:04d} " + "x" * 60 for i in range(200))
