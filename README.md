@@ -43,6 +43,34 @@ And a game-level market shadow collector (observation-only, no model opinions):
 - `run_game_markets.py`: game-market shadow collector CLI (Bovada primary, Action/FanDuel cross-check and fallback)
 - `mlb_props/game_markets.py`: two-way price models and no-vig market-baseline math
 - `scripts/run_game_markets_task.*`: Windows Task Scheduler wrappers for the morning + evening shadow runs
+- `run_forecast_board.py`: forecast-first board builder (dry-run by default)
+- `mlb_props/calibration.py`: shared isotonic/logit/EV/count-distribution math (stdlib only)
+- `mlb_props/forecasting/`: fitted forecast engines (`pitcher_k`, `batter_hit`, `game_runs`, shared `game_data`)
+- `scripts/fit_pitcher_engine.py`, `scripts/fit_batter_engine.py`, `scripts/fit_game_engine.py`: engine fits with inner-split calibration and rolling OOF evaluation
+- `scripts/consolidate_history.py`: one canonical export per date into `evidence/history/` (gitignored)
+- `scripts/grade_daily_card_full_season.py`, `scripts/generate_grade_evidence.py`, `scripts/game_market_gradepass.py`: grading passes into `evidence/grades/`
+
+## Forecast board (added 2026-09-11)
+
+`run_forecast_board.py` builds one unified board from the day's existing
+exports plus the fitted engine artifacts in `evidence/engines/`:
+
+```bash
+python3 run_forecast_board.py --date 2026-09-08
+python3 run_forecast_board.py --date 2026-09-08 --send-discord   # requires FORECAST_BOARD_DISCORD_WEBHOOK_URL
+```
+
+- Pitcher strikeouts: `pitcher-k-dist-v1` emits P(over)/P(push)/P(under)
+  per posted line and picks the likelier side; the FanDuel both-side price
+  is attached for EV display only.
+- Game ML / total / run line: `game-run-model-v1` emits one coherent
+  distribution; picks attach the latest pre-start capture price.
+- Batter 1+ hit is out of scope for the board (engine kept for research
+  only under `mlb_props/forecasting/batter_hit.py`).
+- The model owns every pick; price never flips one. EV is display-only.
+- Writes `outputs/forecast_boards/forecast_board_<date>.json` and appends
+  `outputs/ledger/forecast_ledger.jsonl` + `outputs/ledger/picks_roi.jsonl`
+  (idempotent per run-id; default `board-<date>`).
 
 ## Game-level market shadow (added 2026-08-25)
 

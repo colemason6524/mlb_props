@@ -11,3 +11,6 @@ logs/
 *.zip
 hot_hits_from_windows/
 pitcher_props_from_windows/
+game_markets_from_windows/
+evidence/
+artifacts/

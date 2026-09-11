@@ -9,7 +9,7 @@ def _leg(
     *,
     discord_rank: int = 1,
     price: int | None = -150,
-    result: str = "hit",
+    result: str = "HIT",
 ) -> GradedHotHit:
     return GradedHotHit(
         date="2026-09-09",
@@ -35,7 +35,7 @@ def _leg(
         batter_vs_pitcher_avg=None,
         discord_sim=True,
         result=result,
-        hits=1 if result == "hit" else 0,
+        hits=1 if result == "HIT" else 0,
         at_bats=4,
         plate_appearances=4,
         game_state="final",
@@ -55,11 +55,11 @@ def _leg(
 class HitLegPricedUnitsTest(unittest.TestCase):
     def test_mixed_outcomes_at_collected_prices(self) -> None:
         rows = [
-            _leg(discord_rank=1, price=-210, result="hit"),
-            _leg(discord_rank=2, price=-210, result="miss"),
-            _leg(discord_rank=3, price=140, result="hit"),
-            _leg(discord_rank=4, price=None, result="hit"),
-            _leg(discord_rank=None, price=-210, result="miss"),
+            _leg(discord_rank=1, price=-210, result="HIT"),
+            _leg(discord_rank=2, price=-210, result="MISS"),
+            _leg(discord_rank=3, price=140, result="HIT"),
+            _leg(discord_rank=4, price=None, result="HIT"),
+            _leg(discord_rank=None, price=-210, result="MISS"),
         ]
         summary = hit_leg_priced_units(rows)
         self.assertEqual(summary["legs"], 3)
@@ -69,7 +69,7 @@ class HitLegPricedUnitsTest(unittest.TestCase):
         self.assertEqual(summary["unpriced_delivered_legs"], 1)
 
     def test_no_priced_legs(self) -> None:
-        summary = hit_leg_priced_units([_leg(price=None, result="miss")])
+        summary = hit_leg_priced_units([_leg(price=None, result="MISS")])
         self.assertEqual(summary["legs"], 0)
         self.assertEqual(summary["units"], 0.0)
         self.assertEqual(summary["unpriced_delivered_legs"], 1)

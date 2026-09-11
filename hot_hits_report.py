@@ -87,13 +87,13 @@ def hit_leg_priced_units(rows: list[GradedHotHit]) -> dict:
         for row in rows
         if row.discord_rank is not None
         and row.price_hit_yes is not None
-        and row.result in {"hit", "miss"}
+        and row.result in {"HIT", "MISS"}
     ]
     priced = 0.0
     wins = 0
     for row in graded:
         price = int(row.price_hit_yes)
-        if row.result == "hit":
+        if row.result == "HIT":
             priced += (price / 100.0) if price > 0 else (100.0 / abs(price))
             wins += 1
         else:
@@ -107,7 +107,7 @@ def hit_leg_priced_units(rows: list[GradedHotHit]) -> dict:
             for row in rows
             if row.discord_rank is not None
             and row.price_hit_yes is None
-            and row.result in {"hit", "miss"}
+            and row.result in {"HIT", "MISS"}
         ),
     }
 

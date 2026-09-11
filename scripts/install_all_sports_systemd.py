@@ -49,6 +49,7 @@ TASKS = (
     ScheduledTask("mlb-hot-hits", "MLB Hot Hits", "mlb_props/scripts/run_linux_task.sh", "hot-hits", (daily("11:19"),)),
     ScheduledTask("mlb-pitcher-props", "MLB pitcher props", "mlb_props/scripts/run_linux_task.sh", "pitcher-props", (daily("11:37"),)),
     ScheduledTask("mlb-markets-am", "MLB morning game markets", "mlb_props/scripts/run_linux_task.sh", "game-markets-morning", (daily("11:53"),)),
+    ScheduledTask("mlb-forecast-board", "MLB forecast board", "mlb_props/scripts/run_linux_task.sh", "forecast-board", (daily("12:15"),)),
     ScheduledTask("mlb-markets-pm", "MLB evening game markets", "mlb_props/scripts/run_linux_task.sh", "game-markets-evening", (daily("16:31"),)),
     ScheduledTask("nba-grade", "NBA grading", "nba_stats/scripts/run_linux_task.sh", "grade", (daily("11:45"),)),
     ScheduledTask("nba-board", "NBA board", "nba_stats/scripts/run_linux_task.sh", "board", (daily("15:42"),)),

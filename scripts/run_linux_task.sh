@@ -29,7 +29,8 @@ case "$TASK" in
     hot-hits)
         LOG_FILE="$LOG_DIR/hot_hits_task.log"
         TIMEOUT=45m
-        export DATA_MODE=live SEND_DISCORD=true EXPORT_HISTORY=true DISPLAY_LIMIT=8
+        # Collection only. The forecast board is the sole Discord publisher.
+        export DATA_MODE=live SEND_DISCORD=false EXPORT_HISTORY=true DISPLAY_LIMIT=8
         export HOT_HITS_DISCORD_MIN_SCORE=${HOT_HITS_DISCORD_MIN_SCORE:-10}
         export HOT_HITS_CARD_POLICY=${HOT_HITS_CARD_POLICY:-core-first-v1}
         export HOT_HITS_CORE_LIMIT=${HOT_HITS_CORE_LIMIT:-4}
@@ -40,7 +41,8 @@ case "$TASK" in
     pitcher-props)
         LOG_FILE="$LOG_DIR/pitcher_props_task.log"
         TIMEOUT=45m
-        export DATA_MODE=live SEND_DISCORD=true EXPORT_HISTORY=true DISPLAY_LIMIT=30
+        # Collection only. The forecast board is the sole Discord publisher.
+        export DATA_MODE=live SEND_DISCORD=false EXPORT_HISTORY=true DISPLAY_LIMIT=30
         export PITCHER_PROPS_DISCORD_CORE_LIMIT=${PITCHER_PROPS_DISCORD_CORE_LIMIT:-5}
         export PITCHER_PROPS_DISCORD_WATCH_LIMIT=${PITCHER_PROPS_DISCORD_WATCH_LIMIT:-5}
         export RUN_NOTE="scheduled full pregame run"
@@ -62,6 +64,17 @@ case "$TASK" in
         export RUN_NOTE="scheduled evening lineup-confirmation refresh"
         COMMAND=("$PYTHON_EXE" run_game_markets.py)
         REQUIRED_SECRET=
+        ;;
+    forecast-board)
+        LOG_FILE="$LOG_DIR/forecast_board_task.log"
+        TIMEOUT=30m
+        export DATA_MODE=live EXPORT_HISTORY=true
+        if [[ "${FORECAST_BOARD_SEND_DISCORD:-true}" == "true" ]]; then
+            COMMAND=("$PYTHON_EXE" run_forecast_board.py --date "$(date '+%F')" --send-discord)
+        else
+            COMMAND=("$PYTHON_EXE" run_forecast_board.py --date "$(date '+%F')")
+        fi
+        REQUIRED_SECRET=FORECAST_BOARD_DISCORD_WEBHOOK_URL
         ;;
     *)
         printf 'Unknown task: %s\n' "$TASK" >&2

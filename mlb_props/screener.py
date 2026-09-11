@@ -213,7 +213,11 @@ def _build_price_shadow(line: PropLine, candidate: Candidate) -> PriceShadow | N
             else:
                 flags.append("PRICE_AGAINST_SIDE")
         else:
-            if under_prob <= (1.0 - side_win_probability):
+            # confidence_estimate.win_probability is already the listed side's
+            # win probability, so for an UNDER candidate it IS the under
+            # probability. Compare it directly against the market's no-vig
+            # UNDER probability; the previous complement was inverted.
+            if under_prob <= side_win_probability:
                 flags.append("PRICE_SUPPORTS_SIDE")
             else:
                 flags.append("PRICE_AGAINST_SIDE")
