@@ -500,6 +500,11 @@ def main(argv: list[str] | None = None) -> int:
     print(text)
     print(f"\nboard rows: {len(banner_rows)} | ledger +{forecast_n} | roi +{roi_n} | statuses {statuses}")
 
+    if not banner_rows:
+        print("ERROR: empty board; refusing to publish")
+        record_run(outcome="failed", task="forecast_board", message="empty board, not published", screen_date=screen)
+        return 1
+
     delivery = {"sent": 0, "failed": 0, "status": "dry_run"}
     if args.send_discord:
         webhook = args.webhook_url or os.environ.get("FORECAST_BOARD_DISCORD_WEBHOOK_URL", "")

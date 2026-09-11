@@ -102,3 +102,11 @@ class ArtifactRoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EmptyBoardTests(unittest.TestCase):
+    def test_empty_board_refuses_to_publish(self) -> None:
+        import run_forecast_board as board
+
+        code = board.main(["--date", "2999-01-01", "--run-id", "test-empty-board", "--skip-games"])
+        self.assertEqual(code, 1)
