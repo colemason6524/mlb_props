@@ -43,13 +43,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def newest_export(pattern: str, since: float) -> Path | None:
-    """Newest history export written at or after the pipeline start."""
-    matches = [
-        path
-        for path in HISTORY_DIR.glob(pattern)
-        if path.is_file() and path.stat().st_mtime >= since
-    ]
+def newest_export(pattern: str, since: float, before: set[Path] | None = None) -> Path | None:
+    """Newest history export produced by this run.
+
+    A file qualifies when it is not in the pre-stage snapshot, or (for an
+    overwritten file) when its mtime is at or after the start. The snapshot
+    avoids relying on filesystem timestamp precision, which can round a
+    just-written file slightly before the captured start time.
+    """
+    matches = []
+    for path in HISTORY_DIR.glob(pattern):
+        if not path.is_file():
+            continue
+        if before is not None and path not in before:
+            matches.append(path)
+        elif path.stat().st_mtime >= since - 2.0:
+            matches.append(path)
     if not matches:
         return None
     return max(matches, key=lambda path: path.stat().st_mtime)
@@ -81,21 +90,23 @@ def run_pipeline(
     }
 
     print(f"[pipeline] slot={slot} date={screen} stage=pitcher")
+    pitcher_before = set(HISTORY_DIR.glob("pitcher_props_*.json"))
     pitcher_proc = _run_stage([sys.executable, str(PITCHER_SCRIPT)], collect_env, runner)
     if pitcher_proc.returncode != 0:
         print(f"[pipeline] pitcher collection failed rc={pitcher_proc.returncode}")
         return 1
-    pitcher_export = newest_export("pitcher_props_*.json", start_ts)
+    pitcher_export = newest_export("pitcher_props_*.json", start_ts, pitcher_before)
     if pitcher_export is None:
         print("[pipeline] no fresh pitcher export produced")
         return 1
 
     print("[pipeline] stage=markets")
+    markets_before = set(HISTORY_DIR.glob("game_markets_*.json"))
     markets_proc = _run_stage([sys.executable, str(MARKETS_SCRIPT)], collect_env, runner)
     if markets_proc.returncode != 0:
         print(f"[pipeline] market collection failed rc={markets_proc.returncode}")
         return 1
-    markets_export = newest_export("game_markets_*.json", start_ts)
+    markets_export = newest_export("game_markets_*.json", start_ts, markets_before)
     if markets_export is None:
         print("[pipeline] no fresh game-market export produced")
         return 1

@@ -27,6 +27,22 @@ class NewestExportTests(unittest.TestCase):
                 self.assertEqual(pipeline.newest_export("pitcher_props_*.json", os_time - 1), new)
                 self.assertIsNone(pipeline.newest_export("pitcher_props_*.json", os_time + 10))
 
+    def test_snapshot_detects_file_with_coarse_mtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fresh = root / "pitcher_props_fresh.json"
+            fresh.write_text("{}")
+            os_time = time.time()
+            os.utime(fresh, (os_time - 5, os_time - 5))  # mtime below the grace window
+            with mock.patch.object(pipeline, "HISTORY_DIR", root):
+                self.assertEqual(
+                    pipeline.newest_export("pitcher_props_*.json", os_time, set()),
+                    fresh,
+                )
+                self.assertIsNone(
+                    pipeline.newest_export("pitcher_props_*.json", os_time, {fresh})
+                )
+
 
 class _FakeRunner:
     def __init__(self, fail_stage: str | None = None, write_exports: bool = True):
