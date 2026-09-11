@@ -1,8 +1,15 @@
 # Pitcher Props Handoff
 
-Status checkpoint: 2026-08-17
+Status checkpoint: 2026-08-17 (infrastructure note updated 2026-09-11)
 
 This is the canonical handoff for the pitcher-strikeout side of the shared MLB repository. Read it before changing pitcher projection, scoring, confidence, tiers, output, history, backtests, or Windows scheduling. Hot Hits remains in the same checkout but has its own handoff in `docs/HOT_HITS_HANDOFF.md`.
+
+## Infrastructure Note (2026-09-11)
+
+Daily MLB collection moved from the Windows desktop to the Azure VM (`ssh azure`).
+The forecast board and grading run on the VM via systemd timers. Windows-specific
+sections below are historical; the Windows machine is retired. See
+`docs/AZURE_VM_OPERATIONS.md` for current infrastructure.
 
 ## Purpose
 

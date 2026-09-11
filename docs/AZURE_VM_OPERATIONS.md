@@ -40,6 +40,8 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 - The noon board covers the full remaining slate; the afternoon board covers
   only events still pregame (starts more than 10 minutes away). Both are
   standalone posts labeled `Noon Board` / `Afternoon Update`.
+- Board rendering groups games into readable sections — Moneyline, Run Line,
+  and Totals — with team names and correct away run-line sign.
 - A successful date/slot delivery is recorded; re-runs refuse to repost unless
   invoked with `--force-send`. Failed or partial deliveries may retry.
 - The 6:00 AM grader (`grade_forecast_board.py`) reads the ledgers, resolves

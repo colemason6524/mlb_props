@@ -2,6 +2,14 @@
 
 Status checkpoint: 2026-08-21
 
+## Infrastructure Note (2026-09-11)
+
+Daily MLB collection moved from the Windows desktop to the Azure VM (`ssh azure`).
+The forecast board and grading run on the VM via systemd timers. Hot Hits and
+evening market captures remain available as manual commands but are intentionally
+unscheduled. Windows-specific sections below are historical; the Windows machine
+is retired. See `docs/AZURE_VM_OPERATIONS.md` for current infrastructure.
+
 ## Scope Boundary For The Next Agent
 
 This handoff covers only the Hot Hits hitter workflow. Do not change, refactor, stage, or commit the pitcher-props structure as part of this work.

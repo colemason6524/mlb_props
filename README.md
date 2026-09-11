@@ -44,6 +44,8 @@ And a game-level market shadow collector (observation-only, no model opinions):
 - `mlb_props/game_markets.py`: two-way price models and no-vig market-baseline math
 - `scripts/run_game_markets_task.*`: Windows Task Scheduler wrappers for the morning + evening shadow runs
 - `run_forecast_board.py`: forecast-first board builder (dry-run by default)
+- `run_forecast_pipeline.py`: atomic pitcher/market collection then board publication (production entry point)
+- `grade_forecast_board.py`: daily grader that settles ROI ledger and posts Discord recap
 - `mlb_props/calibration.py`: shared isotonic/logit/EV/count-distribution math (stdlib only)
 - `mlb_props/forecasting/`: fitted forecast engines (`pitcher_k`, `batter_hit`, `game_runs`, shared `game_data`)
 - `scripts/fit_pitcher_engine.py`, `scripts/fit_batter_engine.py`, `scripts/fit_game_engine.py`: engine fits with inner-split calibration and rolling OOF evaluation
@@ -76,6 +78,10 @@ python3 run_forecast_board.py --date 2026-09-08 --slot noon --as-of 2026-09-08T1
   is attached for EV display only.
 - Game ML / total / run line: `game-run-model-v1` emits one coherent
   distribution; picks attach the latest pre-start capture price.
+- Board rendering groups games into three readable sections — Moneyline,
+  Run Line, and Totals — rather than one flat block. Picks show the
+  selected team name (e.g. `New York Mets`) and the selected-side line
+  sign (away run lines flip from the stored home-side spread).
 - Batter 1+ hit is out of scope for the board (engine kept for research
   only under `mlb_props/forecasting/batter_hit.py`).
 - Production engine artifacts are versioned under `mlb_props/artifacts/` so
@@ -486,6 +492,7 @@ export HOT_HITS_CORE_LIMIT=4
 export HOT_HITS_VALUE_LIMIT=2
 export SEND_DISCORD=false
 export DISCORD_WEBHOOK_URL=your_discord_webhook_url
+export FORECAST_BOARD_DISCORD_WEBHOOK_URL=your_forecast_board_discord_webhook_url
 export PITCHER_PROPS_DISCORD_WEBHOOK_URL=your_pitcher_props_discord_webhook_url
 export PITCHER_PROPS_DISCORD_CORE_LIMIT=5
 export PITCHER_PROPS_DISCORD_WATCH_LIMIT=5
@@ -967,3 +974,13 @@ python3 backtest.py --all-history --include-watch \
 - Both MLB scheduled tasks succeeded again on August 17. Pitcher props found 17 FanDuel K lines, exported history, and sent Discord. No scheduler change or retry framework was made; reconsider bounded retries only if the incident recurs.
 - The schema-6 sample has not been graded. The newest Windows backtest still ends August 2. The next task is a read-only Core/Lean/Watch backtest comparing active versus recency-shadow K/BF error, confidence calibration/Brier, and L5 outcome bands before any production tuning.
 - Use `docs/PITCHER_PROPS_HANDOFF.md` as the canonical pitcher handoff and `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md` to start a fresh agent conversation.
+
+### Status checkpoint: 2026-09-11
+
+- Azure VM is the active production host (Windows retired). Three systemd timers run daily: noon pipeline 12:15 ET, afternoon pipeline 16:45 ET, grader 06:00 ET.
+- First noon pipeline completed successfully; first afternoon and grader runs also succeeded.
+- Board rendering splits games into Moneyline, Run Line, and Totals sections with human-readable team names and correct away run-line sign (`+1.5` not `-1.5`).
+- Board formatting tests: 295 pass. Deployment verified on Azure with live artifact.
+- 2026-09-08 grading: pitcher K 38-24 (61.3%), +4.00u across 61 priced plays. 2026-09-09 grading: 9-11 (45.0%), -4.45u across 20 priced plays.
+- Model owns every pick; price never flips one. EV is display-only.
+- Hot Hits and evening market captures remain available as manual commands but are intentionally unscheduled.
