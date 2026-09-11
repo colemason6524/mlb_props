@@ -1,4 +1,4 @@
-# Azure VM Operations (active 2026-09-08)
+# Azure VM Operations (active 2026-09-11)
 
 The Windows desktop is retired (chronic wifi loss + required restarts). Daily
 MLB collection now runs on a cheap Azure VM. The Mac is the source of documents
@@ -16,10 +16,9 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 
 | Timer | When (ET) | Task | Notes |
 | --- | --- | --- | --- |
-| `sports-mlb-hot-hits.timer` | 11:19 | hot-hits | first-ever fire 2026-09-08 |
-| `sports-mlb-pitcher-props.timer` | 11:37 | pitcher-props | first-ever fire 2026-09-08 |
-| `sports-mlb-markets-am.timer` | 11:53 | game-markets-morning | validated E2E 9/8, 14/14 coverage |
-| `sports-mlb-markets-pm.timer` | 16:31 | game-markets-evening | |
+| `sports-mlb-pitcher-props.timer` | 11:37 | pitcher-props | collection only; feeds the board |
+| `sports-mlb-markets-am.timer` | 11:53 | game-markets-morning | collection only; feeds the board |
+| `sports-mlb-forecast-board.timer` | 12:15 | forecast-board | sole MLB Discord publisher |
 
 - Timezones are explicit: `OnCalendar=*-*-* HH:MM:00 America/Detroit` — VM
   clock itself is UTC; do not "fix" the units to drop the TZ suffix.
@@ -32,9 +31,14 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
   `~/.config/mlb_props/env` (secrets), `TZ=America/Detroit`, venv python
   (`~/mlb_props/.venv/bin/python`), flock at
   `~/.local/state/mlb_props/run.lock`, per-task log in `~/mlb_props/logs/`.
-- Env file keys (values on VM): `DISCORD_WEBHOOK_URL`,
-  `PITCHER_PROPS_DISCORD_WEBHOOK_URL`, `HOT_HITS_CARD_POLICY=core-first-v1`,
-  `HOT_HITS_CORE_LIMIT=4`, `HOT_HITS_VALUE_LIMIT=2`.
+- The board requires `FORECAST_BOARD_DISCORD_WEBHOOK_URL`. Collection jobs do
+  not require Discord secrets.
+- Hot Hits and evening market captures remain available as manual commands but
+  are intentionally unscheduled. They do not feed the noon board.
+- Runtime retention defaults: history and game cache 400 days, rendered boards
+  45 days, and two 5 MB generations per task log. Override with
+  `MLB_HISTORY_RETENTION_DAYS`, `MLB_CACHE_RETENTION_DAYS`,
+  `MLB_BOARD_RETENTION_DAYS`, and `MLB_PROPS_MAX_LOG_BYTES`.
 - A leftover tmux scheduler experiment (`scripts/*tmux*`,
   `mlb-props-tmux.service`) is DISABLED and its processes are gone. Do not
   re-enable it — it would double-send Discord cards.
@@ -71,21 +75,19 @@ First-fire results below should be appended after 2026-09-08 11:45 ET.
 
 ```bash
 ssh azure 'systemctl --user list-timers --all | grep mlb'
-ssh azure 'tail -3 ~/mlb_props/logs/hot_hits_task.log ~/mlb_props/logs/pitcher_props_task.log ~/mlb_props/logs/game_markets_task.log'
+ssh azure 'tail -3 ~/mlb_props/logs/pitcher_props_task.log ~/mlb_props/logs/game_markets_task.log ~/mlb_props/logs/forecast_board_task.log'
 ssh azure 'ls -t ~/mlb_props/outputs/history/ | head -6'
 ```
 
-Expect, for each day: 4 fresh `*_YYYYMMDD*T*.json` exports (hot_hits,
-pitcher_props, game_markets x2), task logs ending `exit code 0`. Empty line
-coverage still exits 0 — read the `Coverage:` line and `scrape_sources_*.json`
-diagnostics before treating an empty board as a model result.
+Expect, for each day: one pitcher export, one game-market export, one rendered
+forecast board, and task logs ending `exit code 0`. The board fails closed if
+either required family is missing or empty.
 
 ## Pull day's history to the Mac (grading happens here, not on the VM)
 
 ```bash
-mkdir -p pitcher_props_from_windows/vm hot_hits_from_windows/vm game_markets_from_windows/vm
+mkdir -p pitcher_props_from_windows/vm game_markets_from_windows/vm
 scp 'azure:~/mlb_props/outputs/history/pitcher_props_*.json' pitcher_props_from_windows/vm/
-scp 'azure:~/mlb_props/outputs/history/hot_hits_*.json' hot_hits_from_windows/vm/
 scp 'azure:~/mlb_props/outputs/history/game_markets_*.json' game_markets_from_windows/vm/
 ```
 

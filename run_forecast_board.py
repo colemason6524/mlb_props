@@ -17,6 +17,7 @@ import argparse
 import glob
 import json
 import os
+import time
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -37,11 +38,14 @@ from mlb_props.forecasting.pitcher_k import (
 from mlb_props.notifiers.discord import send_discord_message
 from mlb_props.run_ledger import record_run
 
-ENGINES_DIR = ROOT / "evidence/engines"
+ENGINES_DIR = ROOT / "mlb_props/artifacts"
 BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
 LEDGER_DIR = OUTPUTS_DIR / "ledger"
 FORECAST_LEDGER = LEDGER_DIR / "forecast_ledger.jsonl"
 ROI_LEDGER = LEDGER_DIR / "picks_roi.jsonl"
+HISTORY_RETENTION_DAYS = 400
+BOARD_RETENTION_DAYS = 45
+CACHE_RETENTION_DAYS = 400
 DISCORD_CHUNK_LIMIT = 1900
 
 
@@ -403,8 +407,46 @@ def latest_export(pattern: str) -> Path | None:
     return Path(matches[-1]) if matches else None
 
 
+def prune_old_files(path: Path, pattern: str, retention_days: int) -> int:
+    """Remove runtime files older than the configured retention window."""
+    if not path.exists():
+        return 0
+    cutoff = time.time() - retention_days * 86400
+    removed = 0
+    for candidate in path.glob(pattern):
+        if candidate.is_file() and candidate.stat().st_mtime < cutoff:
+            candidate.unlink()
+            removed += 1
+    return removed
+
+
+def prune_runtime_files() -> int:
+    history_days = int(os.environ.get("MLB_HISTORY_RETENTION_DAYS", HISTORY_RETENTION_DAYS))
+    board_days = int(os.environ.get("MLB_BOARD_RETENTION_DAYS", BOARD_RETENTION_DAYS))
+    cache_days = int(os.environ.get("MLB_CACHE_RETENTION_DAYS", CACHE_RETENTION_DAYS))
+    return sum((
+        prune_old_files(OUTPUTS_DIR / "history", "*.json", history_days),
+        prune_old_files(BOARD_DIR, "*.json", board_days),
+        prune_old_files(ROOT / ".cache/games", "*.json", cache_days),
+    ))
+
+
+def required_family_errors(statuses: dict[str, str], sections: dict[str, list[dict]]) -> list[str]:
+    errors = []
+    for family, section in (("pitcher_k", "pitcher_k"), ("game", "game")):
+        status = statuses.get(family, "missing")
+        if status != "ok":
+            errors.append(f"{family}={status}")
+        elif not sections.get(section):
+            errors.append(f"{family}=empty")
+    return errors
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    pruned = prune_runtime_files()
+    if pruned:
+        print(f"pruned {pruned} expired runtime files")
     screen = args.date
     run_id = args.run_id or f"board-{screen}"
     exported_at = datetime.now(timezone.utc).isoformat()
@@ -460,6 +502,13 @@ def main(argv: list[str] | None = None) -> int:
     BOARD_DIR.mkdir(parents=True, exist_ok=True)
     (BOARD_DIR / f"forecast_board_{screen}.json").write_text(json.dumps(board, indent=1, default=str))
 
+    family_errors = required_family_errors(statuses, sections)
+    if family_errors:
+        message = f"required board family unavailable: {', '.join(family_errors)}"
+        print(f"ERROR: {message}; refusing to publish")
+        record_run(outcome="failed", task="forecast_board", message=message, screen_date=screen)
+        return 1
+
     forecast_rows = [
         {
             "run_id": run_id,
@@ -499,11 +548,6 @@ def main(argv: list[str] | None = None) -> int:
     text = render_board_text(screen, sections)
     print(text)
     print(f"\nboard rows: {len(banner_rows)} | ledger +{forecast_n} | roi +{roi_n} | statuses {statuses}")
-
-    if not banner_rows:
-        print("ERROR: empty board; refusing to publish")
-        record_run(outcome="failed", task="forecast_board", message="empty board, not published", screen_date=screen)
-        return 1
 
     delivery = {"sent": 0, "failed": 0, "status": "dry_run"}
     if args.send_discord:

@@ -11,7 +11,9 @@ from run_forecast_board import (
     chunk_messages,
     ev_flag,
     expected_value,
+    prune_old_files,
     render_board_text,
+    required_family_errors,
 )
 
 
@@ -56,6 +58,39 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(len(path.read_text().splitlines()), 3)
 
 
+class RuntimeSafetyTests(unittest.TestCase):
+    def test_required_families_must_be_healthy_and_nonempty(self) -> None:
+        sections = {"pitcher_k": [{"pick": "over"}], "game": [{"pick": "home"}]}
+        self.assertEqual(required_family_errors({"pitcher_k": "ok", "game": "ok"}, sections), [])
+        self.assertEqual(
+            required_family_errors({"pitcher_k": "no_export", "game": "ok"}, sections),
+            ["pitcher_k=no_export"],
+        )
+        self.assertEqual(
+            required_family_errors({"pitcher_k": "ok", "game": "ok"}, {"pitcher_k": [], "game": []}),
+            ["pitcher_k=empty", "game=empty"],
+        )
+
+    def test_retention_prunes_only_expired_matching_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            expired = root / "expired.json"
+            current = root / "current.json"
+            ignored = root / "expired.txt"
+            for path in (expired, current, ignored):
+                path.write_text("x")
+            import os
+            import time
+
+            old = time.time() - 3 * 86400
+            os.utime(expired, (old, old))
+            os.utime(ignored, (old, old))
+            self.assertEqual(prune_old_files(root, "*.json", 2), 1)
+            self.assertFalse(expired.exists())
+            self.assertTrue(current.exists())
+            self.assertTrue(ignored.exists())
+
+
 class RenderTests(unittest.TestCase):
     def test_board_text_orders_by_probability(self) -> None:
         sections = {
@@ -89,7 +124,7 @@ class ArtifactRoundTripTests(unittest.TestCase):
         self.assertEqual(restored.knots, cal.knots)
         self.assertAlmostEqual(restored.predict(0.5), cal.predict(0.5))
 
-    def test_board_loads_all_three_artifacts(self) -> None:
+    def test_board_loads_both_production_artifacts(self) -> None:
         from run_forecast_board import load_game_engine, load_pitcher_engine
 
         engine = load_pitcher_engine()
@@ -105,7 +140,7 @@ if __name__ == "__main__":
 
 
 class EmptyBoardTests(unittest.TestCase):
-    def test_empty_board_refuses_to_publish(self) -> None:
+    def test_missing_required_families_refuse_to_publish(self) -> None:
         import run_forecast_board as board
 
         code = board.main(["--date", "2999-01-01", "--run-id", "test-empty-board", "--skip-games"])

@@ -47,7 +47,7 @@ case "$TASK" in
         export PITCHER_PROPS_DISCORD_WATCH_LIMIT=${PITCHER_PROPS_DISCORD_WATCH_LIMIT:-5}
         export RUN_NOTE="scheduled full pregame run"
         COMMAND=("$PYTHON_EXE" run_nightly.py)
-        REQUIRED_SECRET=PITCHER_PROPS_DISCORD_WEBHOOK_URL
+        REQUIRED_SECRET=
         ;;
     game-markets-morning)
         LOG_FILE="$LOG_DIR/game_markets_task.log"
@@ -81,6 +81,13 @@ case "$TASK" in
         exit 2
         ;;
 esac
+
+MAX_LOG_BYTES=${MLB_PROPS_MAX_LOG_BYTES:-5242880}
+if [[ -f "$LOG_FILE" ]] && (( $(stat -c %s "$LOG_FILE") >= MAX_LOG_BYTES )); then
+    rm -f "$LOG_FILE.2"
+    [[ ! -f "$LOG_FILE.1" ]] || mv "$LOG_FILE.1" "$LOG_FILE.2"
+    mv "$LOG_FILE" "$LOG_FILE.1"
+fi
 
 exec >>"$LOG_FILE" 2>&1
 printf '%s  Starting %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$TASK"

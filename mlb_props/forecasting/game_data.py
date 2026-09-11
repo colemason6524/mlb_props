@@ -8,6 +8,7 @@ state uses games strictly BEFORE the screen date.
 from __future__ import annotations
 
 import json
+import time
 import urllib.request
 from collections import defaultdict
 from datetime import date, timedelta
@@ -17,6 +18,7 @@ from .game_runs import GameFeatures, TeamGameFeatures
 
 UA = "mlb-props-game-gradepass/1"
 GAME_CACHE_DIRNAME = ".cache/games"
+STARTER_CACHE_SECONDS = 6 * 60 * 60
 SEASON_START = date(2026, 4, 1)
 
 PARK_RUN_FACTOR = {
@@ -55,9 +57,12 @@ def cache_schedule_chunks(start: date | None = None, end: date | None = None) ->
     all_games: list[dict] = []
     chunk_start = start
     while chunk_start <= end:
-        chunk_end = min(chunk_start + timedelta(days=13), end)
-        cache_path = cache_dir() / f"games_{chunk_start.isoformat()}_{chunk_end.isoformat()}.json"
-        if cache_path.exists():
+        nominal_end = chunk_start + timedelta(days=13)
+        chunk_end = min(nominal_end, end)
+        closed_chunk = nominal_end <= end and nominal_end < date.today()
+        cache_suffix = nominal_end.isoformat() if closed_chunk else "open"
+        cache_path = cache_dir() / f"games_{chunk_start.isoformat()}_{cache_suffix}.json"
+        if cache_path.exists() and closed_chunk:
             payload = json.loads(cache_path.read_text())
         else:
             url = (
@@ -77,7 +82,8 @@ def cache_schedule_chunks(start: date | None = None, end: date | None = None) ->
 def fetch_slate(screen: str) -> list[dict]:
     """Schedule (with probable pitchers) for one screen date."""
     cache_path = cache_dir() / f"slate_{screen}.json"
-    if cache_path.exists():
+    # Today's probable pitchers and game statuses can change throughout the day.
+    if cache_path.exists() and date.fromisoformat(screen) < date.today():
         payload = json.loads(cache_path.read_text())
     else:
         url = (
@@ -133,7 +139,8 @@ def starter_features(pitcher_id: int | None, screen: str) -> dict | None:
     if not pitcher_id:
         return None
     cache_path = cache_dir() / f"pitcher_{pitcher_id}_2026.json"
-    if cache_path.exists():
+    cache_fresh = cache_path.exists() and time.time() - cache_path.stat().st_mtime < STARTER_CACHE_SECONDS
+    if cache_fresh:
         splits = json.loads(cache_path.read_text())
     else:
         try:

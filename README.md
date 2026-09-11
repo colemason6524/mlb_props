@@ -67,6 +67,9 @@ python3 run_forecast_board.py --date 2026-09-08 --send-discord   # requires FORE
   distribution; picks attach the latest pre-start capture price.
 - Batter 1+ hit is out of scope for the board (engine kept for research
   only under `mlb_props/forecasting/batter_hit.py`).
+- Production engine artifacts are versioned under `mlb_props/artifacts/` so
+  deployments cannot omit them. After refitting, run
+  `python3 scripts/promote_engine_artifacts.py`, review the diff, and commit it.
 - The model owns every pick; price never flips one. EV is display-only.
 - Writes `outputs/forecast_boards/forecast_board_<date>.json` and appends
   `outputs/ledger/forecast_ledger.jsonl` + `outputs/ledger/picks_roi.jsonl`
