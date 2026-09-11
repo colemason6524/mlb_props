@@ -36,7 +36,7 @@ case "$TASK" in
         export HOT_HITS_CORE_LIMIT=${HOT_HITS_CORE_LIMIT:-4}
         export HOT_HITS_VALUE_LIMIT=${HOT_HITS_VALUE_LIMIT:-2}
         COMMAND=("$PYTHON_EXE" run_hot_hits.py)
-        REQUIRED_SECRET=DISCORD_WEBHOOK_URL
+        REQUIRED_SECRET=
         ;;
     pitcher-props)
         LOG_FILE="$LOG_DIR/pitcher_props_task.log"

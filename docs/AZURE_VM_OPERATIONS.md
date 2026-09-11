@@ -36,7 +36,7 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 - Hot Hits and evening market captures remain available as manual commands but
   are intentionally unscheduled. They do not feed the noon board.
 - Runtime retention defaults: history and game cache 400 days, rendered boards
-  45 days, and two 5 MB generations per task log. Override with
+  45 days, and two 5 MB backups per task log. Override with
   `MLB_HISTORY_RETENTION_DAYS`, `MLB_CACHE_RETENTION_DAYS`,
   `MLB_BOARD_RETENTION_DAYS`, and `MLB_PROPS_MAX_LOG_BYTES`.
 - A leftover tmux scheduler experiment (`scripts/*tmux*`,
