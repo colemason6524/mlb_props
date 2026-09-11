@@ -90,6 +90,27 @@ python3 run_forecast_board.py --date 2026-09-08 --slot noon --as-of 2026-09-08T1
   sends are recorded in `outputs/ledger/discord_delivery.jsonl`; a date/slot
   will not repost without `--force-send`.
 
+### Daily grading (added 2026-09-11)
+
+`grade_forecast_board.py` grades a completed screen date against the free MLB
+Stats API, writes `outputs/grades/forecast_board_<date>.json`, settles priced
+`PENDING` rows in `outputs/ledger/picks_roi.jsonl`, and posts a short recap to
+the board channel. It runs on the VM at 6:00 AM ET for the prior day.
+
+```bash
+python3 grade_forecast_board.py --date 2026-09-08
+python3 grade_forecast_board.py --date 2026-09-08 --send-discord
+```
+
+- Grades pitcher K, game ML, total, and run line; pushes and postponements are
+  handled explicitly. Non-product families (legacy batter hit) are ignored.
+- Forecast accuracy and priced ROI stay separate: unpriced rows count toward
+  forecast W-L but never toward ROI.
+- The headline uses the afternoon revision when a proposition appears in both
+  revisions, otherwise noon; each revision's own record is retained.
+- Re-running is idempotent and the recap will not repost without `--force-send`.
+  An MLB API failure marks grading incomplete and suppresses the recap.
+
 ## Game-level market shadow (added 2026-08-25)
 
 Observation-only collection of moneyline, run line, and game total lines.

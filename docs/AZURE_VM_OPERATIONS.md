@@ -18,6 +18,7 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 | --- | --- | --- | --- |
 | `sports-mlb-pipeline-noon.timer` | 12:15 | forecast-pipeline-noon | collect fresh inputs then publish full slate |
 | `sports-mlb-pipeline-afternoon.timer` | 16:45 | forecast-pipeline-afternoon | collect fresh inputs then publish remaining pregame |
+| `sports-mlb-grade-board.timer` | 06:00 | grade-board | grade prior day, settle ROI ledger, post recap |
 
 - Timezones are explicit: `OnCalendar=*-*-* HH:MM:00 America/Detroit` — VM
   clock itself is UTC; do not "fix" the units to drop the TZ suffix.
@@ -41,6 +42,10 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
   standalone posts labeled `Noon Board` / `Afternoon Update`.
 - A successful date/slot delivery is recorded; re-runs refuse to repost unless
   invoked with `--force-send`. Failed or partial deliveries may retry.
+- The 6:00 AM grader (`grade_forecast_board.py`) reads the ledgers, resolves
+  finals/boxscores from the free MLB Stats API, settles priced `PENDING` ROI
+  rows, and posts a recap to the board channel (deduped per date as slot
+  `grade`). An API failure suppresses the recap and marks the run failed.
 - Hot Hits and evening market captures remain available as manual commands
   (`run_linux_task.sh hot-hits`, `... game-markets-evening`) but are
   intentionally unscheduled. They do not feed the board.

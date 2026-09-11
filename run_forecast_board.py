@@ -258,6 +258,7 @@ def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
             "proposition_id": f"p:{features.game_pk or 'nogame'}:{norm_name(features.pitcher_name)}:{features.line}",
             "game_pk": features.game_pk,
             "subject": features.pitcher_name,
+            "subject_id": cand.get("subject_id"),
             "team": cand.get("team"),
             "opponent": cand.get("opponent"),
             "pick": side,
@@ -350,6 +351,8 @@ def game_rows(
             "subject": f"{away_name} @ {home_name}",
             "team": None,
             "opponent": None,
+            "home_team": home_name,
+            "away_team": away_name,
             "pick": ml_pick,
             "line": None,
             "p_pick": round(forecast.p_home if ml_pick == "home" else forecast.p_away, 4),
@@ -379,6 +382,8 @@ def game_rows(
                 "subject": f"{away_name} @ {home_name}",
                 "team": None,
                 "opponent": None,
+                "home_team": home_name,
+                "away_team": away_name,
                 "pick": total_pick,
                 "line": total.get("line"),
                 "p_pick": round(forecast.p_over if total_pick == "over" else (forecast.p_under or 0.0), 4),
@@ -406,6 +411,8 @@ def game_rows(
                 "subject": f"{away_name} @ {home_name}",
                 "team": None,
                 "opponent": None,
+                "home_team": home_name,
+                "away_team": away_name,
                 "pick": rl_pick,
                 "line": spread.get("line"),
                 "p_pick": round(rl_p, 4),
@@ -694,6 +701,17 @@ def main(argv: list[str] | None = None) -> int:
         record_run(outcome="failed", task="forecast_board", message=message, screen_date=screen)
         return 1
 
+    def row_meta(row: dict) -> dict:
+        return {
+            "game_pk": row.get("game_pk"),
+            "subject": row.get("subject"),
+            "subject_id": row.get("subject_id"),
+            "team": row.get("team"),
+            "opponent": row.get("opponent"),
+            "home_team": row.get("home_team"),
+            "away_team": row.get("away_team"),
+        }
+
     forecast_rows = [
         {
             "run_id": run_id,
@@ -709,6 +727,7 @@ def main(argv: list[str] | None = None) -> int:
             "source": row.get("source"),
             "captured_at": row.get("captured_at"),
             "exported_at": exported_at,
+            **row_meta(row),
         }
         for row in banner_rows
     ]
@@ -724,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
             "payout": american_payout(row.get("price")),
             "outcome": "UNPRICED" if row.get("price") is None else "PENDING",
             "graded": False,
+            **row_meta(row),
         }
         for row in banner_rows
     ]

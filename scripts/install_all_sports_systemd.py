@@ -48,6 +48,7 @@ TASKS = (
     ScheduledTask("horses-nightly", "Horses nightly finalization", "horses/scripts/linux/run_horses_task.sh", "nightly", (daily("20:54"),)),
     ScheduledTask("mlb-pipeline-noon", "MLB noon forecast pipeline", "mlb_props/scripts/run_linux_task.sh", "forecast-pipeline-noon", (daily("12:15"),)),
     ScheduledTask("mlb-pipeline-afternoon", "MLB afternoon forecast pipeline", "mlb_props/scripts/run_linux_task.sh", "forecast-pipeline-afternoon", (daily("16:45"),)),
+    ScheduledTask("mlb-grade-board", "MLB board grading recap", "mlb_props/scripts/run_linux_task.sh", "grade-board", (daily("06:00"),)),
     ScheduledTask("nba-grade", "NBA grading", "nba_stats/scripts/run_linux_task.sh", "grade", (daily("11:45"),)),
     ScheduledTask("nba-board", "NBA board", "nba_stats/scripts/run_linux_task.sh", "board", (daily("15:42"),)),
     ScheduledTask("nfl-board", "NFL board", "nfl_props/scripts/run_nfl_linux_task.sh", "board", (daily("10:56"),)),

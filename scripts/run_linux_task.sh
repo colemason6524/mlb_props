@@ -76,6 +76,18 @@ case "$TASK" in
         fi
         REQUIRED_SECRET=FORECAST_BOARD_DISCORD_WEBHOOK_URL
         ;;
+    grade-board)
+        LOG_FILE="$LOG_DIR/grade_board_task.log"
+        TIMEOUT=30m
+        export DATA_MODE=live
+        GRADE_ARGS=(--date "$(date -d 'yesterday' '+%F')")
+        REQUIRED_SECRET=
+        if [[ "${FORECAST_BOARD_SEND_DISCORD:-true}" == "true" ]]; then
+            GRADE_ARGS+=(--send-discord)
+            REQUIRED_SECRET=FORECAST_BOARD_DISCORD_WEBHOOK_URL
+        fi
+        COMMAND=("$PYTHON_EXE" grade_forecast_board.py "${GRADE_ARGS[@]}")
+        ;;
     forecast-pipeline-noon|forecast-pipeline-afternoon)
         SLOT=${TASK#forecast-pipeline-}
         LOG_FILE="$LOG_DIR/forecast_pipeline_${SLOT}_task.log"
