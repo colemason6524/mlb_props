@@ -16,9 +16,8 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 
 | Timer | When (ET) | Task | Notes |
 | --- | --- | --- | --- |
-| `sports-mlb-pitcher-props.timer` | 11:37 | pitcher-props | collection only; feeds the board |
-| `sports-mlb-markets-am.timer` | 11:53 | game-markets-morning | collection only; feeds the board |
-| `sports-mlb-forecast-board.timer` | 12:15 | forecast-board | sole MLB Discord publisher |
+| `sports-mlb-pipeline-noon.timer` | 12:15 | forecast-pipeline-noon | collect fresh inputs then publish full slate |
+| `sports-mlb-pipeline-afternoon.timer` | 16:45 | forecast-pipeline-afternoon | collect fresh inputs then publish remaining pregame |
 
 - Timezones are explicit: `OnCalendar=*-*-* HH:MM:00 America/Detroit` — VM
   clock itself is UTC; do not "fix" the units to drop the TZ suffix.
@@ -33,8 +32,18 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
   `~/.local/state/mlb_props/run.lock`, per-task log in `~/mlb_props/logs/`.
 - The board requires `FORECAST_BOARD_DISCORD_WEBHOOK_URL`. Collection jobs do
   not require Discord secrets.
-- Hot Hits and evening market captures remain available as manual commands but
-  are intentionally unscheduled. They do not feed the noon board.
+- Each pipeline run collects fresh pitcher props and fresh game markets, then
+  immediately builds and publishes the board from exactly those exports. It
+  stops if a collection stage fails or produces no new export, so the board
+  can never publish from a stale same-day snapshot.
+- The noon board covers the full remaining slate; the afternoon board covers
+  only events still pregame (starts more than 10 minutes away). Both are
+  standalone posts labeled `Noon Board` / `Afternoon Update`.
+- A successful date/slot delivery is recorded; re-runs refuse to repost unless
+  invoked with `--force-send`. Failed or partial deliveries may retry.
+- Hot Hits and evening market captures remain available as manual commands
+  (`run_linux_task.sh hot-hits`, `... game-markets-evening`) but are
+  intentionally unscheduled. They do not feed the board.
 - Runtime retention defaults: history and game cache 400 days, rendered boards
   45 days, and two 5 MB backups per task log. Override with
   `MLB_HISTORY_RETENTION_DAYS`, `MLB_CACHE_RETENTION_DAYS`,
@@ -75,13 +84,14 @@ First-fire results below should be appended after 2026-09-08 11:45 ET.
 
 ```bash
 ssh azure 'systemctl --user list-timers --all | grep mlb'
-ssh azure 'tail -3 ~/mlb_props/logs/pitcher_props_task.log ~/mlb_props/logs/game_markets_task.log ~/mlb_props/logs/forecast_board_task.log'
-ssh azure 'ls -t ~/mlb_props/outputs/history/ | head -6'
+ssh azure 'tail -4 ~/mlb_props/logs/forecast_pipeline_noon_task.log ~/mlb_props/logs/forecast_pipeline_afternoon_task.log'
+ssh azure 'ls -t ~/mlb_props/outputs/forecast_boards/ | head -4'
 ```
 
-Expect, for each day: one pitcher export, one game-market export, one rendered
-forecast board, and task logs ending `exit code 0`. The board fails closed if
-either required family is missing or empty.
+Expect, per pipeline: one fresh pitcher export, one fresh game-market export,
+one rendered board (`forecast_board_<date>_<slot>.json`), and a task log ending
+`exit code 0`. The board fails closed if either required family is missing or
+empty.
 
 ## Pull day's history to the Mac (grading happens here, not on the VM)
 

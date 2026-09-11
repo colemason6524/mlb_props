@@ -19,7 +19,7 @@ import json
 import os
 import time
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -43,10 +43,13 @@ BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
 LEDGER_DIR = OUTPUTS_DIR / "ledger"
 FORECAST_LEDGER = LEDGER_DIR / "forecast_ledger.jsonl"
 ROI_LEDGER = LEDGER_DIR / "picks_roi.jsonl"
+DELIVERY_LEDGER = LEDGER_DIR / "discord_delivery.jsonl"
 HISTORY_RETENTION_DAYS = 400
 BOARD_RETENTION_DAYS = 45
 CACHE_RETENTION_DAYS = 400
 DISCORD_CHUNK_LIMIT = 1900
+START_BUFFER_MINUTES = 10
+SLOT_LABELS = {"noon": "Noon Board", "afternoon": "Afternoon Update"}
 
 
 # ------------------------------------------------------------------ prices
@@ -79,6 +82,99 @@ def ev_flag(ev: float | None) -> str:
 
 def norm_name(name: str) -> str:
     return "".join(ch for ch in (name or "").lower() if ch.isalnum())
+
+
+# ------------------------------------------------------------ scheduling
+
+
+def parse_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def start_times_from_pitcher_export(export: dict) -> dict[str, str]:
+    starts = {}
+    for game in export.get("slate_games") or []:
+        game_id = game.get("game_id")
+        if game_id is not None:
+            starts[str(game_id)] = game.get("game_time_utc")
+    return starts
+
+
+def filter_rows_by_start(
+    rows: list[dict],
+    start_by_pk: dict[str, str],
+    as_of: datetime,
+    buffer_minutes: int = START_BUFFER_MINUTES,
+) -> tuple[list[dict], dict[str, int]]:
+    kept: list[dict] = []
+    stats = {"started": 0, "too_close": 0, "unknown_start": 0}
+    cutoff = as_of + timedelta(minutes=buffer_minutes)
+    for row in rows:
+        start = parse_utc(start_by_pk.get(str(row.get("game_pk"))))
+        if start is None:
+            stats["unknown_start"] += 1
+            kept.append(row)
+            continue
+        if start <= as_of:
+            stats["started"] += 1
+            continue
+        if start <= cutoff:
+            stats["too_close"] += 1
+            continue
+        kept.append(row)
+    return kept, stats
+
+
+def export_age_minutes(path: Path, as_of: datetime) -> float | None:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    exported = parse_utc(payload.get("exported_at"))
+    if exported is None:
+        return None
+    return (as_of - exported).total_seconds() / 60.0
+
+
+def delivery_already_sent(screen: str, slot: str | None) -> bool:
+    if slot is None or not DELIVERY_LEDGER.exists():
+        return False
+    for line in DELIVERY_LEDGER.read_text().splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            record.get("screen_date") == screen
+            and record.get("slot") == slot
+            and record.get("status") == "sent"
+        ):
+            return True
+    return False
+
+
+def record_delivery(screen: str, slot: str | None, run_id: str, status: str, chunks: int) -> None:
+    if slot is None:
+        return
+    DELIVERY_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "screen_date": screen,
+        "slot": slot,
+        "run_id": run_id,
+        "status": status,
+        "chunks": chunks,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with DELIVERY_LEDGER.open("a") as handle:
+        handle.write(json.dumps(payload, default=str) + "\n")
 
 
 # ----------------------------------------------------------------- engines
@@ -186,6 +282,8 @@ def game_rows(
     screen: str,
     engine: GameEngineFit,
     markets_files: list[Path],
+    as_of: datetime | None = None,
+    filter_stats: dict[str, int] | None = None,
 ) -> list[dict]:
     from datetime import date as _date
 
@@ -319,6 +417,12 @@ def game_rows(
                 "ev_flag": ev_flag(rl_ev),
                 "engine_version": forecast.version,
             })
+    if as_of is not None:
+        start_by_pk = {str(game["gamePk"]): game.get("gameDate") for game in slate}
+        rows, stats = filter_rows_by_start(rows, start_by_pk, as_of)
+        if filter_stats is not None:
+            for key, value in stats.items():
+                filter_stats[key] = filter_stats.get(key, 0) + value
     return rows
 
 
@@ -350,8 +454,11 @@ def append_jsonl(path: Path, rows: list[dict], key: tuple[str, str]) -> int:
 # ----------------------------------------------------------------- render
 
 
-def render_board_text(screen: str, sections: dict[str, list[dict]]) -> str:
-    lines = [f"MLB Forecast Board - {screen}", ""]
+def render_board_text(screen: str, sections: dict[str, list[dict]], slot: str | None = None) -> str:
+    header = f"MLB Forecast Board - {screen}"
+    if slot in SLOT_LABELS:
+        header = f"{header} ({SLOT_LABELS[slot]})"
+    lines = [header, ""]
     for family, rows in sections.items():
         lines.append(f"== {family} ({len(rows)}) ==")
         for row in sorted(rows, key=lambda r: r.get("p_pick") or 0.0, reverse=True)[:40]:
@@ -392,12 +499,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--date", required=True, help="Screen date YYYY-MM-DD.")
     parser.add_argument("--pitcher-export", default=None)
     parser.add_argument("--game-markets-dir", default=None)
+    parser.add_argument("--game-markets-file", action="append", default=None,
+                        help="Exact game-market export file(s); repeatable.")
+    parser.add_argument("--slot", choices=("noon", "afternoon"), default=None,
+                        help="Board revision. Sets the run id and Discord label.")
+    parser.add_argument("--as-of", default=None,
+                        help="Explicit UTC timestamp; enables started-event filtering.")
+    parser.add_argument("--max-export-age-minutes", type=float, default=None,
+                        help="Reject explicit exports older than this many minutes.")
     parser.add_argument("--run-id", default=None,
                         help="Stable run identifier for ledger idempotency. "
-                             "Defaults to board-<date>; pass an explicit value "
-                             "for a second same-day run (e.g. an afternoon refresh).")
+                             "Defaults to board-<date>[-<slot>].")
     parser.add_argument("--skip-games", action="store_true")
     parser.add_argument("--send-discord", action="store_true")
+    parser.add_argument("--force-send", action="store_true",
+                        help="Repost even if this date/slot was already delivered.")
     parser.add_argument("--webhook-url", default=None)
     return parser.parse_args(argv)
 
@@ -431,6 +547,19 @@ def prune_runtime_files() -> int:
     ))
 
 
+def derive_run_id(screen: str, slot: str | None, explicit: str | None = None) -> str:
+    if explicit:
+        return explicit
+    if slot:
+        return f"board-{screen}-{slot}"
+    return f"board-{screen}"
+
+
+def board_filename(screen: str, slot: str | None = None) -> str:
+    suffix = f"_{slot}" if slot else ""
+    return f"forecast_board_{screen}{suffix}.json"
+
+
 def required_family_errors(statuses: dict[str, str], sections: dict[str, list[dict]]) -> list[str]:
     errors = []
     for family, section in (("pitcher_k", "pitcher_k"), ("game", "game")):
@@ -448,7 +577,11 @@ def main(argv: list[str] | None = None) -> int:
     if pruned:
         print(f"pruned {pruned} expired runtime files")
     screen = args.date
-    run_id = args.run_id or f"board-{screen}"
+    slot = args.slot
+    run_id = derive_run_id(screen, slot, args.run_id)
+    as_of_provided = args.as_of is not None
+    as_of = parse_utc(args.as_of) or datetime.now(timezone.utc)
+    filter_started = as_of_provided or slot is not None
     exported_at = datetime.now(timezone.utc).isoformat()
 
     pitcher_engine = load_pitcher_engine()
@@ -456,35 +589,82 @@ def main(argv: list[str] | None = None) -> int:
 
     sections: dict[str, list[dict]] = {}
     statuses: dict[str, str] = {}
+    input_meta: dict[str, object] = {}
+    filter_stats = {"started": 0, "too_close": 0, "unknown_start": 0}
 
     pitcher_path = Path(args.pitcher_export) if args.pitcher_export else latest_export("outputs/history/pitcher_props_*.json")
+    pitcher_export: dict | None = None
     if pitcher_engine is None:
         statuses["pitcher_k"] = "missing_artifact"
     elif pitcher_path is None or not pitcher_path.exists():
         statuses["pitcher_k"] = "no_export"
     else:
-        export = json.loads(pitcher_path.read_text())
-        if export.get("screen_date") != screen:
-            statuses["pitcher_k"] = f"export_date_mismatch:{export.get('screen_date')}"
+        pitcher_export = json.loads(pitcher_path.read_text())
+        if pitcher_export.get("screen_date") != screen:
+            statuses["pitcher_k"] = f"export_date_mismatch:{pitcher_export.get('screen_date')}"
+        elif args.max_export_age_minutes is not None:
+            age = export_age_minutes(pitcher_path, as_of)
+            if age is None or age > args.max_export_age_minutes:
+                statuses["pitcher_k"] = f"stale_export:{age if age is not None else 'unknown'}"
+            else:
+                sections["pitcher_k"] = pitcher_rows(pitcher_export, pitcher_engine)
+                statuses["pitcher_k"] = "ok"
         else:
-            sections["pitcher_k"] = pitcher_rows(export, pitcher_engine)
+            sections["pitcher_k"] = pitcher_rows(pitcher_export, pitcher_engine)
             statuses["pitcher_k"] = "ok"
+        input_meta["pitcher_export"] = {
+            "path": str(pitcher_path),
+            "exported_at": pitcher_export.get("exported_at"),
+        }
 
-    banner_rows: list[dict] = []
+    if filter_started and sections.get("pitcher_k"):
+        starts = start_times_from_pitcher_export(pitcher_export or {})
+        sections["pitcher_k"], stats = filter_rows_by_start(sections["pitcher_k"], starts, as_of)
+        for key, value in stats.items():
+            filter_stats[key] += value
 
     if args.skip_games:
         statuses["game"] = "skipped"
     elif game_engine is None:
         statuses["game"] = "missing_artifact"
     else:
-        markets_dir = Path(args.game_markets_dir) if args.game_markets_dir else Path("outputs/history")
-        markets_files = sorted(markets_dir.glob("game_markets_*.json"))
-        try:
-            sections["game"] = game_rows(screen, game_engine, markets_files)
-            statuses["game"] = "ok"
-        except Exception as exc:
-            statuses["game"] = f"error:{type(exc).__name__}:{exc}"
-            sections["game"] = []
+        if args.game_markets_file:
+            markets_files = [Path(item) for item in args.game_markets_file]
+        else:
+            markets_dir = Path(args.game_markets_dir) if args.game_markets_dir else Path("outputs/history")
+            markets_files = sorted(markets_dir.glob("game_markets_*.json"))
+        game_error = None
+        if args.max_export_age_minutes is not None and args.game_markets_file:
+            for path_obj in markets_files:
+                try:
+                    payload = json.loads(path_obj.read_text())
+                except (OSError, ValueError) as exc:
+                    game_error = f"unreadable_export:{type(exc).__name__}"
+                    break
+                if payload.get("screen_date") != screen:
+                    game_error = f"export_date_mismatch:{payload.get('screen_date')}"
+                    break
+                age = export_age_minutes(path_obj, as_of)
+                if age is None or age > args.max_export_age_minutes:
+                    game_error = f"stale_export:{age if age is not None else 'unknown'}"
+                    break
+        if game_error:
+            statuses["game"] = game_error
+        else:
+            try:
+                sections["game"] = game_rows(
+                    screen,
+                    game_engine,
+                    markets_files,
+                    as_of=as_of if filter_started else None,
+                    filter_stats=filter_stats,
+                )
+                statuses["game"] = "ok"
+            except Exception as exc:
+                statuses["game"] = f"error:{type(exc).__name__}:{exc}"
+                sections["game"] = []
+        if markets_files:
+            input_meta["game_markets_files"] = [str(path) for path in markets_files]
 
     banner_rows = [
         row
@@ -494,13 +674,18 @@ def main(argv: list[str] | None = None) -> int:
     board = {
         "run_id": run_id,
         "screen_date": screen,
+        "slot": slot,
+        "as_of": as_of.isoformat(),
         "exported_at": exported_at,
         "statuses": statuses,
+        "inputs": input_meta,
+        "filter_stats": filter_stats,
         "sections": sections,
         "row_count": len(banner_rows),
     }
     BOARD_DIR.mkdir(parents=True, exist_ok=True)
-    (BOARD_DIR / f"forecast_board_{screen}.json").write_text(json.dumps(board, indent=1, default=str))
+    board_path = BOARD_DIR / board_filename(screen, slot)
+    board_path.write_text(json.dumps(board, indent=1, default=str))
 
     family_errors = required_family_errors(statuses, sections)
     if family_errors:
@@ -545,7 +730,7 @@ def main(argv: list[str] | None = None) -> int:
     forecast_n = append_jsonl(FORECAST_LEDGER, forecast_rows, ("run_id", "proposition_id"))
     roi_n = append_jsonl(ROI_LEDGER, roi_rows, ("run_id", "proposition_id"))
 
-    text = render_board_text(screen, sections)
+    text = render_board_text(screen, sections, slot)
     print(text)
     print(f"\nboard rows: {len(banner_rows)} | ledger +{forecast_n} | roi +{roi_n} | statuses {statuses}")
 
@@ -556,6 +741,11 @@ def main(argv: list[str] | None = None) -> int:
             print("ERROR: --send-discord requires FORECAST_BOARD_DISCORD_WEBHOOK_URL")
             record_run(outcome="failed", task="forecast_board", message="missing webhook", screen_date=screen)
             return 2
+        if delivery_already_sent(screen, slot) and not args.force_send:
+            message = f"{screen} {slot} already delivered; refusing to repost without --force-send"
+            print(f"ERROR: {message}")
+            record_run(outcome="failed", task="forecast_board", message=message, screen_date=screen)
+            return 3
         for chunk in chunk_messages(text):
             result = send_discord_message(webhook, chunk)
             if result.ok:
@@ -564,6 +754,7 @@ def main(argv: list[str] | None = None) -> int:
                 delivery["failed"] += 1
                 print(f"discord chunk failed: {result.error or result.status_code}")
         delivery["status"] = "sent" if delivery["failed"] == 0 else "partial"
+        record_delivery(screen, slot, run_id, delivery["status"], delivery["sent"])
 
     record_run(
         outcome="success" if delivery["failed"] == 0 else "failed",

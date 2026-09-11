@@ -52,12 +52,23 @@ And a game-level market shadow collector (observation-only, no model opinions):
 
 ## Forecast board (added 2026-09-11)
 
-`run_forecast_board.py` builds one unified board from the day's existing
-exports plus the fitted engine artifacts in `evidence/engines/`:
+`run_forecast_pipeline.py` is the production entry point: it collects fresh
+pitcher props and game markets, then builds and publishes the board from exactly
+those new exports (so inputs are never stale). Two daily revisions run on the
+VM — noon at 12:15 ET and afternoon at 16:45 ET:
+
+```bash
+python3 run_forecast_pipeline.py --slot noon --send-discord       # full remaining slate
+python3 run_forecast_pipeline.py --slot afternoon --send-discord  # remaining pregame only
+```
+
+`run_forecast_board.py` remains available for manual/replay runs against
+specific exports:
 
 ```bash
 python3 run_forecast_board.py --date 2026-09-08
 python3 run_forecast_board.py --date 2026-09-08 --send-discord   # requires FORECAST_BOARD_DISCORD_WEBHOOK_URL
+python3 run_forecast_board.py --date 2026-09-08 --slot noon --as-of 2026-09-08T17:00:00Z
 ```
 
 - Pitcher strikeouts: `pitcher-k-dist-v1` emits P(over)/P(push)/P(under)
@@ -71,9 +82,13 @@ python3 run_forecast_board.py --date 2026-09-08 --send-discord   # requires FORE
   deployments cannot omit them. After refitting, run
   `python3 scripts/promote_engine_artifacts.py`, review the diff, and commit it.
 - The model owns every pick; price never flips one. EV is display-only.
-- Writes `outputs/forecast_boards/forecast_board_<date>.json` and appends
-  `outputs/ledger/forecast_ledger.jsonl` + `outputs/ledger/picks_roi.jsonl`
-  (idempotent per run-id; default `board-<date>`).
+- Scheduled revisions pass `--slot` and `--as-of`; events whose start is within
+  10 minutes or already past are excluded (pitcher props and game markets).
+- Writes `outputs/forecast_boards/forecast_board_<date>[_<slot>].json` and
+  appends `outputs/ledger/forecast_ledger.jsonl` + `outputs/ledger/picks_roi.jsonl`
+  (idempotent per run-id; default `board-<date>[-<slot>]`). Successful Discord
+  sends are recorded in `outputs/ledger/discord_delivery.jsonl`; a date/slot
+  will not repost without `--force-send`.
 
 ## Game-level market shadow (added 2026-08-25)
 

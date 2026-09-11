@@ -4,16 +4,25 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from run_forecast_board import (
     american_payout,
     append_jsonl,
+    board_filename,
     chunk_messages,
+    delivery_already_sent,
+    derive_run_id,
     ev_flag,
     expected_value,
+    export_age_minutes,
+    filter_rows_by_start,
+    parse_utc,
     prune_old_files,
+    record_delivery,
     render_board_text,
     required_family_errors,
+    start_times_from_pitcher_export,
 )
 
 
@@ -145,3 +154,93 @@ class EmptyBoardTests(unittest.TestCase):
 
         code = board.main(["--date", "2999-01-01", "--run-id", "test-empty-board", "--skip-games"])
         self.assertEqual(code, 1)
+
+
+class SlotTests(unittest.TestCase):
+    def test_run_id_and_filename_per_slot(self) -> None:
+        self.assertEqual(derive_run_id("2026-09-11", "noon"), "board-2026-09-11-noon")
+        self.assertEqual(derive_run_id("2026-09-11", "afternoon"), "board-2026-09-11-afternoon")
+        self.assertEqual(derive_run_id("2026-09-11", None), "board-2026-09-11")
+        self.assertEqual(derive_run_id("2026-09-11", "noon", "custom"), "custom")
+        self.assertEqual(board_filename("2026-09-11", "noon"), "forecast_board_2026-09-11_noon.json")
+        self.assertEqual(board_filename("2026-09-11", "afternoon"), "forecast_board_2026-09-11_afternoon.json")
+        self.assertEqual(board_filename("2026-09-11"), "forecast_board_2026-09-11.json")
+
+    def test_render_labels_revisions(self) -> None:
+        self.assertIn("(Noon Board)", render_board_text("2026-09-11", {}, "noon"))
+        self.assertIn("(Afternoon Update)", render_board_text("2026-09-11", {}, "afternoon"))
+        self.assertNotIn("(Noon Board)", render_board_text("2026-09-11", {}))
+
+
+class StartedEventFilterTests(unittest.TestCase):
+    def _as_of(self, value: str):
+        return parse_utc(value)
+
+    def test_filters_started_too_close_and_keeps_unknown(self) -> None:
+        as_of = self._as_of("2026-09-11T16:00:00Z")
+        rows = [
+            {"game_pk": "started"},
+            {"game_pk": "soon"},
+            {"game_pk": "later"},
+            {"game_pk": "unknown"},
+        ]
+        starts = {
+            "started": "2026-09-11T15:00:00Z",
+            "soon": "2026-09-11T16:05:00Z",
+            "later": "2026-09-11T18:00:00Z",
+        }
+        kept, stats = filter_rows_by_start(rows, starts, as_of, buffer_minutes=10)
+        self.assertEqual([row["game_pk"] for row in kept], ["later", "unknown"])
+        self.assertEqual(stats, {"started": 1, "too_close": 1, "unknown_start": 1})
+
+    def test_exactly_at_cutoff_is_excluded(self) -> None:
+        as_of = self._as_of("2026-09-11T16:00:00Z")
+        starts = {"g": "2026-09-11T16:10:00Z"}
+        kept, stats = filter_rows_by_start([{"game_pk": "g"}], starts, as_of, buffer_minutes=10)
+        self.assertEqual(kept, [])
+        self.assertEqual(stats["too_close"], 1)
+
+    def test_start_times_from_pitcher_export(self) -> None:
+        export = {
+            "slate_games": [
+                {"game_id": "1", "game_time_utc": "2026-09-11T18:00:00Z"},
+                {"game_id": None, "game_time_utc": "2026-09-11T19:00:00Z"},
+            ]
+        }
+        self.assertEqual(
+            start_times_from_pitcher_export(export),
+            {"1": "2026-09-11T18:00:00Z"},
+        )
+
+
+class FreshExportTests(unittest.TestCase):
+    def test_export_age_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "export.json"
+            path.write_text(json.dumps({"exported_at": "2026-09-11T16:00:00Z"}))
+            as_of = parse_utc("2026-09-11T16:05:00Z")
+            self.assertAlmostEqual(export_age_minutes(path, as_of), 5.0)
+
+    def test_export_age_missing_timestamp_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "export.json"
+            path.write_text(json.dumps({}))
+            self.assertIsNone(export_age_minutes(path, parse_utc("2026-09-11T16:05:00Z")))
+
+
+class DeliveryDedupTests(unittest.TestCase):
+    def test_successful_delivery_blocks_repost_and_allows_retry(self) -> None:
+        import run_forecast_board as board
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "discord_delivery.jsonl"
+            with mock.patch.object(board, "DELIVERY_LEDGER", ledger):
+                self.assertFalse(delivery_already_sent("2026-09-11", "noon"))
+                board.record_delivery("2026-09-11", "noon", "board-2026-09-11-noon", "partial", 1)
+                self.assertFalse(delivery_already_sent("2026-09-11", "noon"))
+                board.record_delivery("2026-09-11", "noon", "board-2026-09-11-noon", "sent", 2)
+                self.assertTrue(delivery_already_sent("2026-09-11", "noon"))
+                self.assertFalse(delivery_already_sent("2026-09-11", "afternoon"))
+
+    def test_no_slot_never_dedupes(self) -> None:
+        self.assertFalse(delivery_already_sent("2026-09-11", None))

@@ -76,6 +76,19 @@ case "$TASK" in
         fi
         REQUIRED_SECRET=FORECAST_BOARD_DISCORD_WEBHOOK_URL
         ;;
+    forecast-pipeline-noon|forecast-pipeline-afternoon)
+        SLOT=${TASK#forecast-pipeline-}
+        LOG_FILE="$LOG_DIR/forecast_pipeline_${SLOT}_task.log"
+        TIMEOUT=60m
+        export DATA_MODE=live EXPORT_HISTORY=true
+        PIPELINE_ARGS=(--slot "$SLOT" --date "$(date '+%F')")
+        REQUIRED_SECRET=
+        if [[ "${FORECAST_BOARD_SEND_DISCORD:-true}" == "true" ]]; then
+            PIPELINE_ARGS+=(--send-discord)
+            REQUIRED_SECRET=FORECAST_BOARD_DISCORD_WEBHOOK_URL
+        fi
+        COMMAND=("$PYTHON_EXE" run_forecast_pipeline.py "${PIPELINE_ARGS[@]}")
+        ;;
     *)
         printf 'Unknown task: %s\n' "$TASK" >&2
         exit 2
