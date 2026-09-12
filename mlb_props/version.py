@@ -63,7 +63,7 @@ PITCHER_DAILY_CARD_POLICY_VERSION = "daily-unders-card-v1"
 # observation-only no-vig conversion of collected prices, not a model opinion.
 GAME_MARKETS_HISTORY_SCHEMA_VERSION = 2
 GAME_MARKETS_PRICE_SHADOW_VERSION = "game-price-shadow-v1"
-GAME_MARKETS_SOURCE_POLICY_VERSION = "bovada-primary-action-fanduel-fallback-v1"
+GAME_MARKETS_SOURCE_POLICY_VERSION = "bovada-primary-fanduel-nonwhole-total-preferred-v2"
 
 # Hot Hits pricing shadow: single-sided Bovada YES prices for "Player to
 # record a Hit" (plus the 2+ Hits alt line) captured per event at run time.

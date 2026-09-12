@@ -76,6 +76,9 @@ class GameForecast:
     p_home_cover_line: float | None
     run_diff_mu: float
     run_diff_sd: float
+    p_home_cover: float | None = None
+    p_away_cover: float | None = None
+    p_rl_push: float | None = None
 
 
 @dataclass
@@ -286,8 +289,15 @@ def forecast_game(
         p_under = 1.0 - over - push
 
     p_home_cover = None
-    if run_line is not None and margin_cover > 0:
-        p_home_cover = margin_cover / (margin_cover + margin_lose)
+    p_home_cover_uncond: float | None = None
+    p_away_cover_uncond: float | None = None
+    p_rl_push: float | None = None
+    if run_line is not None:
+        p_home_cover_uncond = margin_cover
+        p_away_cover_uncond = margin_lose
+        p_rl_push = margin_push
+        if margin_cover + margin_lose > 0:
+            p_home_cover = margin_cover / (margin_cover + margin_lose)
 
     return GameForecast(
         version=version,
@@ -303,4 +313,7 @@ def forecast_game(
         p_home_cover_line=p_home_cover,
         run_diff_mu=mu_home - mu_away,
         run_diff_sd=fit.resid_scale * math.sqrt(2.0),
+        p_home_cover=p_home_cover_uncond,
+        p_away_cover=p_away_cover_uncond,
+        p_rl_push=p_rl_push,
     )

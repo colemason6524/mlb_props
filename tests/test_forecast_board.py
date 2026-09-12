@@ -39,6 +39,21 @@ class PriceMathTests(unittest.TestCase):
         self.assertLess(expected_value(0.45, -110), 0.0)
         self.assertIsNone(expected_value(0.6, None))
 
+    def test_expected_value_with_push(self) -> None:
+        from run_forecast_board import expected_value_with_push
+
+        # Whole total: p_over 0.44, p_under 0.43, push 0.13
+        # Over pick EV = 0.44*1 - 0.43 (not 1-0.44), push refunds 0.
+        self.assertAlmostEqual(expected_value_with_push(0.44, 0.43, 100), 0.44 - 0.43)
+        self.assertAlmostEqual(expected_value_with_push(0.43, 0.44, 100), 0.43 - 0.44)
+        # Push reduces loss vs naive EV
+        naive = expected_value(0.44, 100)  # 0.44 - 0.56 = -0.12
+        push_aware = expected_value_with_push(0.44, 0.43, 100)  # 0.01
+        self.assertGreater(push_aware, naive)
+        self.assertIsNone(expected_value_with_push(None, 0.5, 100))
+        self.assertIsNone(expected_value_with_push(0.5, None, 100))
+        self.assertIsNone(expected_value_with_push(0.5, 0.4, None))
+
     def test_ev_flag_thresholds(self) -> None:
         self.assertEqual(ev_flag(0.05), "playable")
         self.assertEqual(ev_flag(0.0), "thin")

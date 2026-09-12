@@ -70,6 +70,16 @@ def expected_value(pick_prob: float, price: int | None) -> float | None:
     return pick_prob * payout - (1.0 - pick_prob)
 
 
+def expected_value_with_push(p_win: float | None, p_loss: float | None, price: int | None) -> float | None:
+    """EV where pushes refund (0), so only win/loss matter: win*payout - loss."""
+    if p_win is None or p_loss is None:
+        return None
+    payout = american_payout(price)
+    if payout is None:
+        return None
+    return p_win * payout - p_loss
+
+
 def ev_flag(ev: float | None) -> str:
     if ev is None:
         return "unpriced"
@@ -332,6 +342,8 @@ def game_rows(
         moneyline = markets.get("moneyline") or {}
         total = markets.get("total") or {}
         spread = markets.get("spread") or {}
+        # Per-market source override: totals may have been selected from FanDuel.
+        total_source = markets.get("total_source") or markets.get("source")
         forecast = forecast_game(
             engine,
             features,
@@ -371,10 +383,16 @@ def game_rows(
         if total.get("line") is not None and forecast.p_over is not None:
             total_pick = "over" if forecast.p_over >= (forecast.p_under or 0.0) else "under"
             total_price = total.get("price_a") if total_pick == "over" else total.get("price_b")
-            total_ev = expected_value(
-                forecast.p_over if total_pick == "over" else (forecast.p_under or 0.0),
-                total_price,
-            )
+            # Push-aware EV: over pick win=p_over loss=p_under, vice versa. Push (1-p_over-p_under) refunds 0.
+            if forecast.p_under is not None:
+                p_win_total = forecast.p_over if total_pick == "over" else forecast.p_under
+                p_loss_total = forecast.p_under if total_pick == "over" else forecast.p_over
+                total_ev = expected_value_with_push(p_win_total, p_loss_total, total_price)
+            else:
+                total_ev = expected_value(
+                    forecast.p_over if total_pick == "over" else 0.0,
+                    total_price,
+                )
             rows.append({
                 "family": "game_total",
                 "proposition_id": f"g:{pk}:total:{total.get('line')}",
@@ -390,8 +408,8 @@ def game_rows(
                 "p_over": round(forecast.p_over, 4),
                 "p_under": round(forecast.p_under if forecast.p_under is not None else 0.0, 4),
                 "price": total_price,
-                "book": markets.get("source"),
-                "source": markets.get("source"),
+                "book": total_source,
+                "source": total_source,
                 "captured_at": capture.get("exported_at"),
                 "ev": round(total_ev, 4) if total_ev is not None else None,
                 "ev_flag": ev_flag(total_ev),
@@ -402,8 +420,17 @@ def game_rows(
         if spread.get("line") is not None and forecast.p_home_cover_line is not None:
             rl_pick = "home_covers" if forecast.p_home_cover_line >= 0.5 else "away_covers"
             rl_price = spread.get("price_a") if rl_pick == "home_covers" else spread.get("price_b")
-            rl_p = forecast.p_home_cover_line if rl_pick == "home_covers" else 1.0 - forecast.p_home_cover_line
-            rl_ev = expected_value(rl_p, rl_price)
+            # Push-aware run-line EV using unconditional cover probabilities when available.
+            if forecast.p_home_cover is not None and forecast.p_away_cover is not None:
+                if rl_pick == "home_covers":
+                    rl_win, rl_loss = forecast.p_home_cover, forecast.p_away_cover
+                else:
+                    rl_win, rl_loss = forecast.p_away_cover, forecast.p_home_cover
+                rl_p = rl_win / (rl_win + rl_loss) if (rl_win + rl_loss) > 0 else (forecast.p_home_cover_line if rl_pick == "home_covers" else 1.0 - forecast.p_home_cover_line)
+                rl_ev = expected_value_with_push(rl_win, rl_loss, rl_price)
+            else:
+                rl_p = forecast.p_home_cover_line if rl_pick == "home_covers" else 1.0 - forecast.p_home_cover_line
+                rl_ev = expected_value(rl_p, rl_price)
             rows.append({
                 "family": "game_rl",
                 "proposition_id": f"g:{pk}:spread:{spread.get('line')}",

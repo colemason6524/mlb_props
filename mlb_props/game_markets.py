@@ -50,6 +50,9 @@ class GameMarketSnapshot:
     cross_check_moneyline: TwoWayPrice | None = None
     cross_check_spread: TwoWayPrice | None = None
     cross_check_total: TwoWayPrice | None = None
+    total_source: str | None = None
+    total_source_updated_at: str | None = None
+    total_selection_reason: str | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -70,6 +73,9 @@ class GameMarketSnapshot:
                 "spread": self.cross_check_spread.as_dict() if self.cross_check_spread else None,
                 "total": self.cross_check_total.as_dict() if self.cross_check_total else None,
             },
+            "total_source": self.total_source,
+            "total_source_updated_at": self.total_source_updated_at,
+            "total_selection_reason": self.total_selection_reason,
         }
 
 
@@ -108,6 +114,55 @@ def market_baseline_payload(snapshot: GameMarketSnapshot) -> dict:
         "over_no_vig": _round_or_none(over_p),
         "under_no_vig": _round_or_none(under_p),
     }
+
+
+def _is_whole_line(line: float | None) -> bool:
+    if line is None:
+        return False
+    return abs(float(line) - round(float(line))) < 1e-9
+
+
+def _is_complete_total(price: TwoWayPrice | None) -> bool:
+    return (
+        price is not None
+        and price.line is not None
+        and price.price_a is not None
+        and price.price_b is not None
+    )
+
+
+def select_total_market(
+    bovada_total: TwoWayPrice | None,
+    bovada_source: str | None,
+    bovada_updated_at: str | None,
+    fanduel_total: TwoWayPrice | None,
+    fanduel_source: str | None,
+    fanduel_updated_at: str | None,
+) -> tuple[TwoWayPrice | None, str | None, str | None, str | None]:
+    """Choose the total market to display.
+
+    When Bovada's total is a whole number and FanDuel has a complete non-whole
+    total with both prices, prefer FanDuel's paired total. Never mix a line from
+    one book with prices from another.
+    """
+    if (
+        bovada_total is not None
+        and _is_whole_line(bovada_total.line)
+        and _is_complete_total(bovada_total)
+        and _is_complete_total(fanduel_total)
+        and not _is_whole_line(fanduel_total.line)  # type: ignore[union-attr]
+    ):
+        return (
+            fanduel_total,
+            fanduel_source,
+            fanduel_updated_at,
+            "fanduel_nonwhole_total_preferred",
+        )
+    if bovada_total is not None:
+        return bovada_total, bovada_source, bovada_updated_at, "bovada_total_selected"
+    if _is_complete_total(fanduel_total):
+        return fanduel_total, fanduel_source, fanduel_updated_at, "fanduel_fallback_total"
+    return None, None, None, None
 
 
 def _round_or_none(value: float | None, digits: int = 4) -> float | None:

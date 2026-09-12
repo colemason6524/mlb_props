@@ -18,7 +18,7 @@ from typing import Any
 
 from mlb_props.cache import JsonCache
 from mlb_props.config import CACHE_DIR, OUTPUTS_DIR, load_settings
-from mlb_props.game_markets import GameMarketSnapshot, TwoWayPrice, market_baseline_payload
+from mlb_props.game_markets import GameMarketSnapshot, TwoWayPrice, market_baseline_payload, select_total_market
 from mlb_props.run_ledger import record_run
 from mlb_props.sources.action_network import FANDUEL_SOURCE, fetch_action_markets
 from mlb_props.sources.bovada_mlb import fetch_game_markets
@@ -59,6 +59,71 @@ def build_snapshot(game, primary_entry: dict | None, cross_check_entry: dict | N
         line = payload.get("line")
         return TwoWayPrice(line=float(line) if line is not None else None, price_a=int(price_a), price_b=int(price_b))
 
+    primary_is_bovada = str(primary_entry.get("source") or "") == "bovada"
+    # Select total market with whole->half preference before constructing snapshot.
+    # Never mix line from one book with prices from another.
+    if primary_is_bovada and cross_check_entry is not None:
+        bovada_total = two_way(primary_entry.get("total"))
+        fanduel_total = two_way(cross_check_entry.get("total"))
+        selected_total, selected_source, selected_updated_at, reason = select_total_market(
+            bovada_total,
+            str(primary_entry.get("source") or "bovada"),
+            primary_entry.get("source_updated_at"),
+            fanduel_total,
+            str(cross_check_entry.get("source") or FANDUEL_SOURCE),
+            cross_check_entry.get("source_updated_at"),
+        )
+        # Build snapshot with selected total and provenance.
+        if selected_total is not None:
+            # When FanDuel preferred, keep Bovada total as cross-check for auditability.
+            if reason == "fanduel_nonwhole_total_preferred":
+                return GameMarketSnapshot(
+                    game_id=game.game_id,
+                    game_date=game.game_date.isoformat(),
+                    home_team=game.home_team,
+                    away_team=game.away_team,
+                    start_time_utc=primary_entry.get("start_time_utc"),
+                    moneyline=two_way(primary_entry.get("moneyline")),
+                    spread=two_way(primary_entry.get("spread")),
+                    total=selected_total,
+                    source=str(primary_entry.get("source") or "unknown"),
+                    source_updated_at=primary_entry.get("source_updated_at"),
+                    cross_check_source=str(cross_check_entry.get("source")) if cross_check_entry else None,
+                    cross_check_updated_at=cross_check_entry.get("source_updated_at") if cross_check_entry else None,
+                    cross_check_moneyline=two_way(cross_check_entry.get("moneyline")) if cross_check_entry else None,
+                    cross_check_spread=two_way(cross_check_entry.get("spread")) if cross_check_entry else None,
+                    cross_check_total=bovada_total,
+                    total_source=selected_source,
+                    total_source_updated_at=selected_updated_at,
+                    total_selection_reason=reason,
+                )
+            # Bovada total retained (whole but no usable FanDuel half, or already half).
+            return GameMarketSnapshot(
+                game_id=game.game_id,
+                game_date=game.game_date.isoformat(),
+                home_team=game.home_team,
+                away_team=game.away_team,
+                start_time_utc=primary_entry.get("start_time_utc"),
+                moneyline=two_way(primary_entry.get("moneyline")),
+                spread=two_way(primary_entry.get("spread")),
+                total=selected_total,
+                source=str(primary_entry.get("source") or "unknown"),
+                source_updated_at=primary_entry.get("source_updated_at"),
+                cross_check_source=str(cross_check_entry.get("source")) if cross_check_entry else None,
+                cross_check_updated_at=cross_check_entry.get("source_updated_at") if cross_check_entry else None,
+                cross_check_moneyline=two_way(cross_check_entry.get("moneyline")) if cross_check_entry else None,
+                cross_check_spread=two_way(cross_check_entry.get("spread")) if cross_check_entry else None,
+                cross_check_total=fanduel_total,
+                total_source=selected_source,
+                total_source_updated_at=selected_updated_at,
+                total_selection_reason=reason,
+            )
+
+    # Default path: no selection swap (FanDuel fallback, no cross-check, or Bovada without FanDuel).
+    primary_total = two_way(primary_entry.get("total"))
+    total_src = str(primary_entry.get("source") or "unknown") if primary_total else None
+    total_updated = primary_entry.get("source_updated_at") if primary_total else None
+    reason_default = "primary_total_selected" if primary_total else None
     return GameMarketSnapshot(
         game_id=game.game_id,
         game_date=game.game_date.isoformat(),
@@ -67,7 +132,7 @@ def build_snapshot(game, primary_entry: dict | None, cross_check_entry: dict | N
         start_time_utc=primary_entry.get("start_time_utc"),
         moneyline=two_way(primary_entry.get("moneyline")),
         spread=two_way(primary_entry.get("spread")),
-        total=two_way(primary_entry.get("total")),
+        total=primary_total,
         source=str(primary_entry.get("source") or "unknown"),
         source_updated_at=primary_entry.get("source_updated_at"),
         cross_check_source=str(cross_check_entry.get("source")) if cross_check_entry else None,
@@ -75,6 +140,9 @@ def build_snapshot(game, primary_entry: dict | None, cross_check_entry: dict | N
         cross_check_moneyline=two_way(cross_check_entry.get("moneyline")) if cross_check_entry else None,
         cross_check_spread=two_way(cross_check_entry.get("spread")) if cross_check_entry else None,
         cross_check_total=two_way(cross_check_entry.get("total")) if cross_check_entry else None,
+        total_source=total_src,
+        total_source_updated_at=total_updated,
+        total_selection_reason=reason_default,
     )
 
 
@@ -255,13 +323,20 @@ def _run() -> tuple[int, str]:
         "bovada_primary": sum(1 for s in snapshots if s.source == "bovada"),
         "action_fanduel_fallback": sum(1 for s in snapshots if s.source == FANDUEL_SOURCE),
         "action_fanduel_cross_checks": sum(1 for s in snapshots if s.cross_check_source == FANDUEL_SOURCE),
+        "total_fanduel_nonwhole_preferred": sum(
+            1 for s in snapshots if s.total_selection_reason == "fanduel_nonwhole_total_preferred"
+        ),
+        "total_source_bovada": sum(1 for s in snapshots if (s.total_source or s.source) == "bovada" and s.total),
+        "total_source_fanduel": sum(1 for s in snapshots if s.total_source == FANDUEL_SOURCE and s.total),
         "unmatched_slate_games": len(unmatched_slate_games),
     }
     print(
         "Coverage: "
         f"{coverage['matched_with_lines']}/{coverage['slate_games']} games matched; "
         f"ML {coverage['with_moneyline']}, RL {coverage['with_spread']}, "
-        f"total {coverage['with_total']}; Bovada primary {coverage['bovada_primary']}; "
+        f"total {coverage['with_total']} (Bovada {coverage['total_source_bovada']}, "
+        f"FanDuel {coverage['total_source_fanduel']}, pref {coverage['total_fanduel_nonwhole_preferred']}); "
+        f"Bovada primary {coverage['bovada_primary']}; "
         f"Action/FanDuel fallback {coverage['action_fanduel_fallback']}; "
         f"cross-check {coverage['action_fanduel_cross_checks']}."
     )

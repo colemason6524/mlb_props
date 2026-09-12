@@ -171,11 +171,94 @@ class EmptyCoverageRunTests(unittest.TestCase):
             "total": {"line": 8.5, "price_a": -110, "price_b": -110},
         }
         snapshot = build_snapshot(_slate_game(), bovada, action)
+        # Bovada primary remains for moneyline/spread; whole total swaps to FanDuel half.
         self.assertEqual(snapshot.source, "bovada")
-        self.assertEqual(snapshot.total.line, 8.0)
+        self.assertEqual(snapshot.total.line, 8.5)
+        self.assertEqual(snapshot.total.price_a, -110)
+        self.assertEqual(snapshot.total_source, FANDUEL_SOURCE)
+        self.assertEqual(snapshot.total_selection_reason, "fanduel_nonwhole_total_preferred")
+        # Bovada whole total preserved as cross-check for auditability.
         self.assertEqual(snapshot.cross_check_source, FANDUEL_SOURCE)
-        self.assertEqual(snapshot.cross_check_total.line, 8.5)
+        self.assertEqual(snapshot.cross_check_total.line, 8.0)
         self.assertEqual(snapshot.cross_check_updated_at, "2026-08-28T20:00:00+00:00")
+        # Moneyline/spread stay bovada
+        self.assertEqual(snapshot.moneyline.price_a, -120)
+        self.assertEqual(snapshot.spread.price_a, 150)
+
+    def test_whole_bovada_kept_when_fanduel_also_whole(self) -> None:
+        bovada = {
+            "source": "bovada",
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "total": {"line": 8.0, "price_a": -105, "price_b": -115},
+        }
+        action = {
+            "source": FANDUEL_SOURCE,
+            "total": {"line": 8.0, "price_a": -110, "price_b": -110},
+        }
+        snapshot = build_snapshot(_slate_game(), bovada, action)
+        self.assertEqual(snapshot.total.line, 8.0)
+        self.assertEqual(snapshot.total_source, "bovada")
+        self.assertEqual(snapshot.total_selection_reason, "bovada_total_selected")
+        self.assertEqual(snapshot.cross_check_total.line, 8.0)
+
+    def test_half_bovada_not_swapped_even_if_fanduel_differs(self) -> None:
+        bovada = {
+            "source": "bovada",
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "total": {"line": 8.5, "price_a": -105, "price_b": -115},
+        }
+        action = {
+            "source": FANDUEL_SOURCE,
+            "total": {"line": 7.5, "price_a": -110, "price_b": -110},
+        }
+        snapshot = build_snapshot(_slate_game(), bovada, action)
+        self.assertEqual(snapshot.total.line, 8.5)
+        self.assertEqual(snapshot.total_source, "bovada")
+        self.assertEqual(snapshot.total_selection_reason, "bovada_total_selected")
+
+    def test_whole_bovada_kept_when_fanduel_incomplete(self) -> None:
+        bovada = {
+            "source": "bovada",
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "total": {"line": 8.0, "price_a": -105, "price_b": -115},
+        }
+        action = {
+            "source": FANDUEL_SOURCE,
+            "total": {"line": 8.5, "price_a": -110, "price_b": None},
+        }
+        snapshot = build_snapshot(_slate_game(), bovada, action)
+        self.assertEqual(snapshot.total.line, 8.0)
+        self.assertEqual(snapshot.total_source, "bovada")
+        self.assertEqual(snapshot.total_selection_reason, "bovada_total_selected")
+
+    def test_fanduel_fallback_total_when_bovada_missing(self) -> None:
+        bovada = {
+            "source": "bovada",
+            "start_time_utc": "2026-08-28T23:05:00+00:00",
+            "moneyline": {"line": None, "price_a": -120, "price_b": 100},
+        }
+        action = {
+            "source": FANDUEL_SOURCE,
+            "total": {"line": 8.5, "price_a": -110, "price_b": -110},
+        }
+        snapshot = build_snapshot(_slate_game(), bovada, action)
+        # Bovada has no total, but selection logic promotes complete FanDuel half-total.
+        self.assertEqual(snapshot.total.line, 8.5)
+        self.assertEqual(snapshot.total_source, FANDUEL_SOURCE)
+        self.assertIn(snapshot.total_selection_reason, ("fanduel_fallback_total", "fanduel_nonwhole_total_preferred"))
+
+    def test_total_selection_never_mixes_line_and_prices(self) -> None:
+        from mlb_props.game_markets import TwoWayPrice, select_total_market
+
+        bovada = TwoWayPrice(line=8.0, price_a=-105, price_b=-115)
+        fanduel = TwoWayPrice(line=8.5, price_a=-100, price_b=-122)
+        selected, src, _, reason = select_total_market(bovada, "bovada", None, fanduel, FANDUEL_SOURCE, None)
+        self.assertEqual(reason, "fanduel_nonwhole_total_preferred")
+        self.assertEqual(selected.line, 8.5)
+        self.assertEqual(selected.price_a, -100)
+        self.assertEqual(selected.price_b, -122)
+        # Ensure not mixed: fanduel line with bovada prices would be 8.5 with -105/-115.
+        self.assertNotEqual((selected.price_a, selected.price_b), (bovada.price_a, bovada.price_b))
 
     def test_doubleheader_market_is_matched_by_nearest_start_time(self) -> None:
         game = _slate_game()
