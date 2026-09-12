@@ -62,7 +62,6 @@ TASKS = (
     ScheduledTask("tennis-grade", "Tennis grading", "tennis_props/scripts/run_linux_task.sh", "grade", (daily("08:13"),)),
     ScheduledTask("tennis-stats-shadow", "Tennis stats shadow", "tennis_props/scripts/run_linux_task.sh", "stats-shadow", (daily("09:27"),)),
     ScheduledTask("tennis-daily", "Tennis morning card", "tennis_props/scripts/run_linux_task.sh", "daily", (daily("10:02"),)),
-    ScheduledTask("tennis-midday", "Tennis midday card", "tennis_props/scripts/run_linux_task.sh", "midday", (daily("15:21"),)),
     ScheduledTask("ufc-odds", "UFC scheduled odds collection", "ufc_props/scripts/run_linux_task.sh", "collect-odds", tuple(daily(t) for t in ("00:17", "06:17", "12:17", "18:17"))),
     ScheduledTask("ufc-odds-window", "UFC dense odds window", "ufc_props/scripts/run_linux_task.sh", "collect-odds-window", interval_minutes=17),
     ScheduledTask("ufc-board", "UFC Friday and Saturday boards", "ufc_props/scripts/run_linux_task.sh", "board", (weekly("Fri", "18:07"), weekly("Sat", "09:56"))),
