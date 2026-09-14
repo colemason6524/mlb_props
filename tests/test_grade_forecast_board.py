@@ -307,5 +307,178 @@ class GradeScreenTests(unittest.TestCase):
         self.assertTrue(result["api_error"])
 
 
+class CanonicalSelectionTests(unittest.TestCase):
+    def _client(self, finals, start="2026-09-10T23:00:00Z"):
+        class Fake:
+            def finals(self, screen):
+                return finals
+
+            def schedule(self, screen):
+                return {"dates": [{"games": [{"gamePk": 1, "gameDate": start}]}]}
+
+        return Fake()
+
+    def _row(self, run_id, prop, family, game_pk="1", price=-110, captured="2026-09-10T16:00:00Z", **extra):
+        base = {
+            "run_id": run_id,
+            "screen_date": "2026-09-10",
+            "family": family,
+            "proposition_id": prop,
+            "pick": "home" if family == "game_ml" else ("over" if family == "game_total" else "home"),
+            "line": extra.get("line"),
+            "price": price,
+            "p_pick": 0.6,
+            "subject": "Test",
+            "subject_id": None,
+            "game_pk": game_pk,
+            "captured_at": captured,
+            "exported_at": captured,
+            "_roi_index": extra.get("_roi_index"),
+        }
+        base.update(extra)
+        return base
+
+    def test_canonical_key_excludes_line(self) -> None:
+        noon = self._row("board-2026-09-10-noon", "g:1:total:8.0", "game_total", line=8.0, pick="over")
+        aft = self._row("board-2026-09-10-afternoon", "g:1:total:8.5", "game_total", line=8.5, pick="over")
+        self.assertEqual(grade.canonical_market_key(noon), grade.canonical_market_key(aft))
+        ml1 = self._row("r", "g:1:ml", "game_ml")
+        ml2 = self._row("r", "g:2:ml", "game_ml", game_pk="2")
+        self.assertNotEqual(grade.canonical_market_key(ml1), grade.canonical_market_key(ml2))
+
+    def test_afternoon_replaces_noon(self) -> None:
+        noon = self._row("board-2026-09-10-noon", "g:1:ml", "game_ml", captured="2026-09-10T16:00:00Z", _roi_index=0)
+        aft = self._row("board-2026-09-10-afternoon", "g:1:ml", "game_ml", captured="2026-09-10T20:00:00Z", _roi_index=1)
+        selected, superseded, stats = grade.select_canonical_rows(
+            [noon, aft], {"1": grade.parse_row_time(aft) and grade.datetime(2026, 9, 10, 23, 0, tzinfo=grade.timezone.utc)}
+        )
+        self.assertEqual(len(selected), 1)
+        key = next(iter(selected))
+        self.assertEqual(selected[key]["run_id"], "board-2026-09-10-afternoon")
+        self.assertEqual(len(superseded), 1)
+        self.assertEqual(superseded[0]["_roi_index"], 0)
+        self.assertEqual(stats["replaced_by_afternoon"], 1)
+
+    def test_noon_fallback_when_afternoon_missing(self) -> None:
+        noon_only = self._row("board-2026-09-10-noon", "g:1:ml", "game_ml", captured="2026-09-10T16:00:00Z", _roi_index=0)
+        selected, superseded, stats = grade.select_canonical_rows([noon_only], {})
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(stats["noon_only_fallback"], 1)
+        self.assertEqual(superseded, [])
+
+    def test_post_start_capture_excluded(self) -> None:
+        noon = self._row("board-2026-09-10-noon", "g:1:ml", "game_ml", captured="2026-09-10T16:00:00Z", _roi_index=0)
+        late = self._row("board-2026-09-10-afternoon", "g:1:ml", "game_ml", captured="2026-09-11T00:00:00Z", _roi_index=1)
+        from datetime import datetime, timezone
+
+        start = {"1": datetime(2026, 9, 10, 23, 0, tzinfo=timezone.utc)}
+        selected, superseded, _ = grade.select_canonical_rows([noon, late], start)
+        key = next(iter(selected))
+        # Late capture is post-start, so noon wins and late is not marked superseded (excluded pool).
+        self.assertEqual(selected[key]["run_id"], "board-2026-09-10-noon")
+        self.assertEqual(superseded, [])
+
+    def test_changed_total_selects_latest_line(self) -> None:
+        finals = {"1": {"final": True, "state": "Final", "home_score": 5, "away_score": 4}}
+        noon = self._row(
+            "board-2026-09-10-noon", "g:1:total:8.0", "game_total",
+            line=8.0, pick="over", price=-110,
+            captured="2026-09-10T16:00:00Z", _roi_index=0,
+        )
+        aft = self._row(
+            "board-2026-09-10-afternoon", "g:1:total:8.5", "game_total",
+            line=8.5, pick="over", price=-110,
+            captured="2026-09-10T20:00:00Z", _roi_index=1,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = root / "forecast_ledger.jsonl"
+            roi = root / "picks_roi.jsonl"
+            forecast.write_text("\n".join([json.dumps(noon), json.dumps(aft)]) + "\n")
+            roi.write_text(
+                "\n".join([
+                    json.dumps({**noon, "payout": 100 / 110, "outcome": "PENDING", "graded": False}),
+                    json.dumps({**aft, "payout": 100 / 110, "outcome": "PENDING", "graded": False}),
+                ]) + "\n"
+            )
+            with mock.patch.object(grade, "FORECAST_LEDGER", forecast), mock.patch.object(grade, "ROI_LEDGER", roi):
+                result = grade.grade_screen("2026-09-10", client=self._client(finals))
+        canonical = result["canonical"]
+        self.assertEqual(canonical["selection"]["unique_markets"], 1)
+        # 9 runs vs lines: noon 8.0 WIN, afternoon 8.5 WIN (9>8.5) – selection must be afternoon line.
+        self.assertEqual(canonical["rows"][0]["line"], 8.5)
+        self.assertEqual(canonical["rows"][0]["run_id"], "board-2026-09-10-afternoon")
+        # Revisions preserved for audit.
+        self.assertIn("board-2026-09-10-noon", result["revisions"])
+        self.assertIn("board-2026-09-10-afternoon", result["revisions"])
+        # Settlements are canonical only (1, not 2).
+        self.assertEqual(len(result["settlements"]), 1)
+        self.assertEqual(len(result["superseded"]), 1)
+
+    def test_superseded_excluded_from_roi(self) -> None:
+        finals = {"1": {"final": True, "state": "Final", "home_score": 5, "away_score": 3}}
+        noon = self._row(
+            "board-2026-09-10-noon", "g:1:ml", "game_ml",
+            pick="home", price=-110, captured="2026-09-10T16:00:00Z", _roi_index=0,
+        )
+        aft = self._row(
+            "board-2026-09-10-afternoon", "g:1:ml", "game_ml",
+            pick="home", price=-110, captured="2026-09-10T20:00:00Z", _roi_index=1,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = root / "forecast_ledger.jsonl"
+            roi = root / "picks_roi.jsonl"
+            forecast.write_text("\n".join([json.dumps(noon), json.dumps(aft)]) + "\n")
+            roi.write_text(
+                "\n".join([
+                    json.dumps({**noon, "payout": 100 / 110, "outcome": "PENDING", "graded": False}),
+                    json.dumps({**aft, "payout": 100 / 110, "outcome": "PENDING", "graded": False}),
+                ]) + "\n"
+            )
+            with mock.patch.object(grade, "FORECAST_LEDGER", forecast), mock.patch.object(grade, "ROI_LEDGER", roi):
+                result = grade.grade_screen("2026-09-10", client=self._client(finals))
+                self.assertEqual(result["canonical"]["roi"]["plays"], 1)
+                changed = grade.settle_roi_ledger(roi, result["settlements"])
+                changed += grade.mark_superseded_rows(roi, result["superseded"])
+                self.assertEqual(changed, 2)
+                lines = [json.loads(x) for x in roi.read_text().splitlines()]
+                by_outcome = [r["outcome"] for r in lines]
+                self.assertIn(grade.WIN, by_outcome)
+                self.assertIn(grade.SUPERSEDED, by_outcome)
+                sup = next(r for r in lines if r["outcome"] == grade.SUPERSEDED)
+                self.assertEqual(sup["original_outcome"], "PENDING")
+                self.assertEqual(sup["units"], 0.0)
+
+    def test_recap_uses_canonical(self) -> None:
+        result = {
+            "screen_date": "2026-09-10",
+            "latest_run_id": "board-2026-09-10-afternoon",
+            "pending_total": 0,
+            "revisions": {
+                "board-2026-09-10-noon": {
+                    "slot": "noon",
+                    "summary": {"totals": {"w": 3, "l": 1, "p": 0, "void": 0, "pending": 0, "error": 0, "hit_rate": 0.75}, "families": {}},
+                    "roi": {"plays": 3, "units": 1.0, "roi": 0.3333},
+                },
+                "board-2026-09-10-afternoon": {
+                    "slot": "afternoon",
+                    "summary": {"totals": {"w": 1, "l": 1, "p": 0, "void": 0, "pending": 0, "error": 0, "hit_rate": 0.5}, "families": {}},
+                    "roi": {"plays": 2, "units": 0.0, "roi": 0.0},
+                },
+            },
+            "canonical": {
+                "summary": {"totals": {"w": 4, "l": 1, "p": 0, "void": 0, "pending": 0, "error": 0, "hit_rate": 0.8}, "families": {}},
+                "roi": {"plays": 4, "units": 1.5, "roi": 0.375},
+                "selection": {"unique_markets": 5, "replaced_by_afternoon": 3, "noon_only_fallback": 2},
+                "pending": 0,
+            },
+        }
+        text = grade.render_recap(result)
+        self.assertIn("Canonical board: 4-1 (80.0%)", text)
+        self.assertIn("5 unique markets", text)
+        self.assertNotIn("Latest board (afternoon)", text)
+
+
 if __name__ == "__main__":
     unittest.main()
