@@ -232,6 +232,97 @@ class BoardContextFallbackTests(unittest.TestCase):
         self.assertEqual(rows[0]["ev_flag"], "thin")
         self.assertEqual(rows[0]["projected_batters_faced"], 24.0)
 
+    def test_exact_board_inputs_are_joined_and_market_p_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            boards = root / "forecast_boards"
+            history = root / "history"
+            boards.mkdir()
+            history.mkdir()
+            pitcher_path = history / "pitcher_props_20260922T161500Z.json"
+            pitcher_path.write_text(json.dumps({"candidates": [{
+                "prop_type": "PITCHER_STRIKEOUTS", "event_id": "1",
+                "subject_name": "Test Pitcher", "line": 5.5,
+                "projected_strikeouts": 6.2, "projected_outs": 18.0,
+                "projected_batters_faced": 24.0, "projected_k_rate": 0.26,
+                "opportunity_shadow": {"opportunity_confidence": "HIGH"},
+                "price_shadow": {"over_price": -110, "under_price": -110,
+                                  "over_no_vig_probability": 0.5,
+                                  "under_no_vig_probability": 0.5},
+            }]}))
+            game_path = history / "game_markets_20260922T161500Z.json"
+            game_path.write_text(json.dumps({
+                "exported_at": "2026-09-22T16:15:00Z",
+                "games": [{"game_id": "1", "moneyline": {"price_a": -110, "price_b": -110}}],
+            }))
+            board_payload = {
+                "run_id": "board-2026-09-22-noon", "screen_date": "2026-09-22", "slot": "noon",
+                "inputs": {"pitcher_export": {"path": str(pitcher_path)},
+                           "game_markets_files": [str(game_path)]},
+                "sections": {
+                    "pitcher_k": [{"family": "pitcher_k", "proposition_id": "p:1:testpitcher:5.5",
+                                    "game_pk": "1", "subject": "Test Pitcher", "pick": "over",
+                                    "line": 5.5, "price": -110, "market_p": 0.5}],
+                    "game": [{"family": "game_ml", "proposition_id": "g:1:ml", "game_pk": "1",
+                              "pick": "home", "price": -110, "market_p": 0.5,
+                              "captured_at": "2026-09-22T16:15:00Z"}],
+                },
+            }
+            (boards / "forecast_board_2026-09-22_noon.json").write_text(json.dumps(board_payload))
+            with mock.patch.object(grade, "BOARD_DIR", boards), mock.patch.object(grade, "OUTPUTS_DIR", root):
+                context = grade.load_board_context("2026-09-22")
+        pctx = context[("board-2026-09-22-noon", "p:1:testpitcher:5.5")]
+        self.assertNotIn("projected_batters_faced", pctx["row"])  # projection comes from exact export
+        self.assertEqual(pctx["exact_source"]["candidate"]["projected_batters_faced"], 24.0)
+        self.assertTrue(pctx["input_audit"]["recorded_input_found"])
+        self.assertTrue(pctx["input_audit"]["market_probability_source_match"])
+        self.assertTrue(pctx["input_audit"]["price_source_match"])
+        gctx = context[("board-2026-09-22-noon", "g:1:ml")]
+        self.assertTrue(gctx["input_audit"]["recorded_input_found"])
+        self.assertTrue(gctx["input_audit"]["market_probability_source_match"])
+        self.assertTrue(gctx["input_audit"]["price_source_match"])
+
+
+class MarketMovementTests(unittest.TestCase):
+    def test_noon_afternoon_movement_uses_noon_side_and_marks_changed_line(self) -> None:
+        noon_row = {"family": "game_total", "game_pk": "1", "proposition_id": "g:1:total:8.5",
+                    "pick": "under", "line": 8.5, "price": -110}
+        aft_row = {"family": "game_total", "game_pk": "1", "proposition_id": "g:1:total:8.5",
+                   "pick": "over", "line": 8.5, "price": -110}
+        contexts = {
+            ("n", "g:1:total:8.5"): {"slot": "noon", "row": noon_row,
+                "market_context": {"probabilities": {"over": 0.48, "under": 0.52},
+                                   "prices": {"over": 105, "under": -115}}},
+            ("a", "g:1:total:8.5"): {"slot": "afternoon", "row": aft_row,
+                "market_context": {"probabilities": {"over": 0.55, "under": 0.45},
+                                   "prices": {"over": -120, "under": 100}}},
+        }
+        graded = [{**noon_row, "canonical_key": "game_total:1", "result": grade.WIN}]
+        movement = grade.build_market_movement(graded, contexts)
+        self.assertEqual(movement["matched_markets"], 1)
+        self.assertEqual(movement["side_changed"], 1)
+        row = movement["movement_rows"][0]
+        self.assertAlmostEqual(row["noon_pick_market_p_delta"], -0.07)
+        self.assertFalse(row["line_changed"])
+        self.assertTrue(row["market_probability_comparable"])
+
+    def test_probability_not_compared_across_line_change(self) -> None:
+        noon_row = {"family": "game_total", "game_pk": "1", "proposition_id": "g:1:total:8.0",
+                    "pick": "under", "line": 8.0, "price": -110}
+        aft_row = {"family": "game_total", "game_pk": "1", "proposition_id": "g:1:total:8.5",
+                   "pick": "under", "line": 8.5, "price": -110}
+        contexts = {
+            ("n", "p1"): {"slot": "noon", "row": noon_row,
+                "market_context": {"probabilities": {"under": 0.52}, "prices": {"under": -110}}},
+            ("a", "p2"): {"slot": "afternoon", "row": aft_row,
+                "market_context": {"probabilities": {"under": 0.56}, "prices": {"under": -110}}},
+        }
+        graded = [{**noon_row, "canonical_key": "game_total:1", "result": grade.WIN}]
+        row = grade.build_market_movement(graded, contexts)["movement_rows"][0]
+        self.assertTrue(row["line_changed"])
+        self.assertFalse(row["market_probability_comparable"])
+        self.assertIsNone(row["noon_pick_market_p_delta"])
+
 
 class ParseStandingsTests(unittest.TestCase):
     def test_parse_and_lookup(self) -> None:
@@ -291,6 +382,8 @@ class LearningReviewTests(unittest.TestCase):
         self.assertEqual(review["groups"]["by_family"]["pitcher_k"]["n"], 2)
         self.assertIn("Daily learning review", review["markdown"])
         self.assertIn("Pitcher by workload/conversion", review["markdown"])
+        self.assertIn("Noon-to-afternoon market movement", review["markdown"])
+        self.assertIn("Exact input-join audit", review["markdown"])
 
 
 class SummaryTests(unittest.TestCase):

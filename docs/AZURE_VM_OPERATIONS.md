@@ -48,6 +48,12 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
   finals/boxscores from the free MLB Stats API, settles priced `PENDING` ROI
   rows, and posts a recap to the board channel (deduped per date as slot
   `grade`). An API failure suppresses the recap and marks the run failed.
+- Each successful grade also writes
+  `outputs/grades/learning_review_<date>.json` and `.md`. The review compares
+  noon/afternoon market movement (not CLV), audits joins against the exact
+  exports recorded by each board, and reports wins/losses by side, price, model
+  gap, pitcher workload/conversion, and historical team situation. Pull these
+  artifacts to the Mac with the day's grade JSON when doing season reviews.
 - Hot Hits and evening market captures remain available as manual commands
   (`run_linux_task.sh hot-hits`, `... game-markets-evening`) but are
   intentionally unscheduled. They do not feed the board.

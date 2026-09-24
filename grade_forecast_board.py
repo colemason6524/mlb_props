@@ -328,8 +328,75 @@ CONTEXT_FIELDS = (
 )
 
 
+def _resolve_recorded_input(raw_path: str | None, expected_dir: Path) -> Path | None:
+    """Resolve the board's recorded path, including after VM artifacts are pulled to Mac."""
+    if not raw_path:
+        return None
+    recorded = Path(raw_path).expanduser()
+    if recorded.is_file():
+        return recorded
+    pulled_copy = expected_dir / recorded.name
+    return pulled_copy if pulled_copy.is_file() else None
+
+
+def _no_vig_pair(price_a, price_b) -> tuple[float | None, float | None]:
+    def implied(price):
+        if price is None:
+            return None
+        price = float(price)
+        return 100.0 / (price + 100.0) if price > 0 else -price / (-price + 100.0)
+
+    pa, pb = implied(price_a), implied(price_b)
+    if pa is None or pb is None or pa + pb <= 0:
+        return None, None
+    return pa / (pa + pb), pb / (pa + pb)
+
+
+def _row_side_market(family: str, pick: str, game: dict | None) -> dict:
+    """Return both sides' prices/probabilities from the exact source capture."""
+    game = game or {}
+    if family == "pitcher_k":
+        candidate = game.get("candidate") or {}
+        shadow = candidate.get("price_shadow") or {}
+        return {
+            "prices": {"over": shadow.get("over_price"), "under": shadow.get("under_price")},
+            "probabilities": {
+                "over": shadow.get("over_no_vig_probability"),
+                "under": shadow.get("under_no_vig_probability"),
+            },
+            "selected_price": shadow.get("over_price") if pick == "over" else shadow.get("under_price"),
+            "selected_probability": shadow.get("over_no_vig_probability") if pick == "over" else shadow.get("under_no_vig_probability"),
+            "line": candidate.get("line"),
+        }
+
+    source_game = game.get("game") or {}
+    if family == "game_ml":
+        market = source_game.get("moneyline") or {}
+        pa, pb = _no_vig_pair(market.get("price_a"), market.get("price_b"))
+        return {"prices": {"home": market.get("price_a"), "away": market.get("price_b")},
+                "probabilities": {"home": pa, "away": pb},
+                "selected_price": market.get("price_a") if pick == "home" else market.get("price_b"),
+                "selected_probability": pa if pick == "home" else pb, "line": None}
+    if family == "game_total":
+        market = source_game.get("total") or {}
+        pa, pb = _no_vig_pair(market.get("price_a"), market.get("price_b"))
+        return {"prices": {"over": market.get("price_a"), "under": market.get("price_b")},
+                "probabilities": {"over": pa, "under": pb},
+                "selected_price": market.get("price_a") if pick == "over" else market.get("price_b"),
+                "selected_probability": pa if pick == "over" else pb, "line": market.get("line")}
+    if family == "game_rl":
+        market = source_game.get("spread") or {}
+        pa, pb = _no_vig_pair(market.get("price_a"), market.get("price_b"))
+        return {"prices": {"home_covers": market.get("price_a"), "away_covers": market.get("price_b")},
+                "probabilities": {"home_covers": pa, "away_covers": pb},
+                "selected_price": market.get("price_a") if pick == "home_covers" else market.get("price_b"),
+                "selected_probability": pa if pick == "home_covers" else pb, "line": market.get("line")}
+    return {"prices": {}, "probabilities": {}, "selected_price": None,
+            "selected_probability": None, "line": None}
+
+
 def load_board_context(screen: str) -> dict[tuple[str, str], dict]:
-    """Latest board row per (run_id, proposition_id) for a screen date."""
+    """Load board rows and join each to the exact inputs recorded by that run."""
     context: dict[tuple[str, str], dict] = {}
     if not BOARD_DIR.exists():
         return context
@@ -341,78 +408,130 @@ def load_board_context(screen: str) -> dict[tuple[str, str], dict]:
         if payload.get("screen_date") != screen:
             continue
         run_id = str(payload.get("run_id"))
-        is_slot = str(run_id).endswith(("-noon", "-afternoon"))
+        inputs = payload.get("inputs") or {}
+        pitcher_export = _resolve_recorded_input(
+            (inputs.get("pitcher_export") or {}).get("path"), OUTPUTS_DIR / "history"
+        )
+        pitcher_candidates: dict[tuple[str, str, float | None], dict] = {}
+        if pitcher_export is not None:
+            try:
+                pitcher_payload = json.loads(pitcher_export.read_text())
+            except (OSError, ValueError):
+                pitcher_payload = {}
+            for candidate in pitcher_payload.get("candidates") or []:
+                if str(candidate.get("prop_type") or "") != "PITCHER_STRIKEOUTS":
+                    continue
+                try:
+                    candidate_line = float(candidate.get("line"))
+                except (TypeError, ValueError):
+                    candidate_line = None
+                pitcher_candidates[(str(candidate.get("event_id")), match_key(candidate.get("subject_name") or ""), candidate_line)] = candidate
+
+        game_sources: list[dict] = []
+        game_input_paths = inputs.get("game_markets_files") or []
+        if isinstance(game_input_paths, str):
+            game_input_paths = [game_input_paths]
+        for raw_game_path in game_input_paths:
+            resolved = _resolve_recorded_input(raw_game_path, OUTPUTS_DIR / "history")
+            if resolved is None:
+                continue
+            try:
+                market_payload = json.loads(resolved.read_text())
+            except (OSError, ValueError):
+                continue
+            for market_game in market_payload.get("games") or []:
+                game_sources.append({
+                    "path": str(resolved),
+                    "exported_at": market_payload.get("exported_at"),
+                    "game": market_game,
+                })
+
         for section in (payload.get("sections") or {}).values():
             for row in section:
-                key = (run_id, str(row.get("proposition_id")))
-                # Prefer a real slot board over a legacy one when both exist.
-                if key in context and not is_slot:
-                    continue
-                context[key] = row
+                family = row.get("family")
+                exact_source = None
+                if family == "pitcher_k":
+                    try:
+                        line = float(row.get("line"))
+                    except (TypeError, ValueError):
+                        line = None
+                    candidate = pitcher_candidates.get((
+                        str(row.get("game_pk")), match_key(row.get("subject") or ""), line
+                    ))
+                    if candidate is not None:
+                        exact_source = {"candidate": candidate, "path": str(pitcher_export)}
+                else:
+                    matches = [source for source in game_sources
+                               if str((source.get("game") or {}).get("game_id")) == str(row.get("game_pk"))]
+                    captured_at = row.get("captured_at")
+                    exact_source = next((source for source in matches
+                                         if source.get("exported_at") == captured_at), None)
+                    if exact_source is None and matches and not captured_at:
+                        exact_source = matches[-1]
+
+                market_context = _row_side_market(family, row.get("pick"), exact_source)
+                expected_market_p = market_context.get("selected_probability")
+                stored_market_p = row.get("market_p")
+                market_delta = None
+                if expected_market_p is not None and stored_market_p is not None:
+                    market_delta = round(float(stored_market_p) - float(expected_market_p), 6)
+                expected_price = market_context.get("selected_price")
+                stored_price = row.get("price")
+                price_match = None
+                if expected_price is not None and stored_price is not None:
+                    price_match = _numeric_equal(expected_price, stored_price)
+                audit = {
+                    "board_found": True,
+                    "recorded_input_found": exact_source is not None,
+                    "input_path": (exact_source or {}).get("path"),
+                    "market_probability_source_match": (
+                        abs(market_delta) <= 0.001 if market_delta is not None else None
+                    ),
+                    "stored_market_p": stored_market_p,
+                    "source_market_p": expected_market_p,
+                    "market_p_delta": market_delta,
+                    "stored_price": stored_price,
+                    "source_price": expected_price,
+                    "price_source_match": price_match,
+                }
+                context[(run_id, str(row.get("proposition_id")))] = {
+                    "row": row,
+                    "exact_source": exact_source,
+                    "market_context": market_context,
+                    "input_audit": audit,
+                    "slot": payload.get("slot"),
+                }
     return context
 
 
 def enrich_context(row: dict, context: dict[tuple[str, str], dict]) -> dict:
-    board_row = context.get((str(row.get("run_id")), str(row.get("proposition_id"))))
-    if not board_row:
+    board_context = context.get((str(row.get("run_id")), str(row.get("proposition_id"))))
+    if not board_context:
+        row["input_audit"] = {"board_found": False, "recorded_input_found": False}
         return row
+    board_row = board_context.get("row") or {}
     for field in CONTEXT_FIELDS:
         if row.get(field) is None and board_row.get(field) is not None:
             row[field] = board_row.get(field)
+    market_context = board_context.get("market_context") or {}
+    row["market_context"] = market_context
+    row["input_audit"] = board_context.get("input_audit")
+    if row.get("market_p") is None and market_context.get("selected_probability") is not None:
+        row["market_p"] = market_context["selected_probability"]
+    exact_source = board_context.get("exact_source") or {}
+    candidate = exact_source.get("candidate") or {}
+    if row.get("family") == "pitcher_k" and candidate:
+        opportunity = candidate.get("opportunity_shadow") or {}
+        for field in CONTEXT_FIELDS:
+            if row.get(field) is None:
+                if field == "opportunity_confidence":
+                    row[field] = opportunity.get("opportunity_confidence")
+                else:
+                    row[field] = candidate.get(field)
     return row
 
 
-def load_pitcher_projections(screen: str) -> dict:
-    """Pitcher projections from the day's export, keyed by game/subject/line.
-
-    The board rows and forecast ledger only carry the picked side; the source
-    candidate export is the only place the projected workload/K-rate survive.
-    """
-    history_dir = OUTPUTS_DIR / "history"
-    projections: dict[tuple, dict] = {}
-    if not history_dir.exists():
-        return projections
-    for path in sorted(history_dir.glob("pitcher_props_*.json")):
-        try:
-            payload = json.loads(path.read_text())
-        except (OSError, ValueError):
-            continue
-        if payload.get("screen_date") != screen:
-            continue
-        for cand in payload.get("candidates") or []:
-            if str(cand.get("prop_type") or "") != "PITCHER_STRIKEOUTS":
-                continue
-            key = (
-                str(cand.get("event_id")),
-                match_key(cand.get("subject_name") or ""),
-                cand.get("line"),
-            )
-            projections[key] = {
-                "projected_strikeouts": cand.get("projected_strikeouts"),
-                "projected_outs": cand.get("projected_outs"),
-                "projected_batters_faced": cand.get("projected_batters_faced"),
-                "projected_k_rate": cand.get("projected_k_rate"),
-                "opportunity_confidence": (cand.get("opportunity_shadow") or {}).get("opportunity_confidence"),
-            }
-    return projections
-
-
-def enrich_pitcher_context(row: dict, projections: dict) -> dict:
-    if row.get("family") != "pitcher_k":
-        return row
-    meta = _resolve_meta(row)
-    name_key = meta.get("name_key") or match_key(str(row.get("subject") or ""))
-    key = (str(meta.get("game_pk") or ""), name_key, row.get("line"))
-    projection = projections.get(key)
-    if not projection:
-        return row
-    for field, value in projection.items():
-        if row.get(field) is None and value is not None:
-            row[field] = value
-    return row
-
-
-def load_screen_rows(screen: str) -> list[dict]:
+def load_screen_rows(screen: str, board_context: dict | None = None) -> list[dict]:
     forecast: dict[tuple[str, str], dict] = {}
     if FORECAST_LEDGER.exists():
         for line in FORECAST_LEDGER.read_text().splitlines():
@@ -455,13 +574,9 @@ def load_screen_rows(screen: str) -> list[dict]:
         if key not in forecast:
             rows.append({**roi_row, "_roi_index": index})
 
-    context = load_board_context(screen)
-    projections = load_pitcher_projections(screen)
+    context = board_context if board_context is not None else load_board_context(screen)
     for row in rows:
-        if context:
-            enrich_context(row, context)
-        if projections:
-            enrich_pitcher_context(row, projections)
+        enrich_context(row, context)
     return rows
 
 
@@ -718,6 +833,7 @@ def grade_row(
     meta = _resolve_meta(row)
     graded = {
         "run_id": row.get("run_id"),
+        "screen_date": row.get("screen_date"),
         "family": meta.get("family") or row.get("family"),
         "proposition_id": row.get("proposition_id"),
         "pick": row.get("pick"),
@@ -727,6 +843,8 @@ def grade_row(
         "market_p": row.get("market_p"),
         "ev": row.get("ev"),
         "ev_flag": row.get("ev_flag"),
+        "market_context": row.get("market_context"),
+        "input_audit": row.get("input_audit"),
         "subject": row.get("subject"),
         "game_pk": meta.get("game_pk"),
         "_roi_index": row.get("_roi_index"),
@@ -882,7 +1000,8 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
         standings = None
         print(f"WARN: standings fetch failed: {type(exc).__name__}: {exc}")
 
-    rows = load_screen_rows(screen)
+    board_context = load_board_context(screen)
+    rows = load_screen_rows(screen, board_context)
     # Game start times bound canonical selection to pregame snapshots.
     start_by_pk: dict[str, datetime] = {}
     try:
@@ -969,7 +1088,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
     canonical_summary = summarize(canonical_rows) if canonical_rows else None
     canonical_roi = roi_summary(canonical_rows) if canonical_rows else None
     settlements = [r for r in canonical_rows if r.get("_roi_index") is not None]
-    learning = build_learning_review(canonical_rows) if canonical_rows else None
+    learning = build_learning_review(canonical_rows, board_context) if canonical_rows else None
 
     latest = latest_run_id(list(revisions.keys()))
     pending_total = sum(r["summary"]["totals"]["pending"] for r in revisions.values())
@@ -1080,7 +1199,7 @@ def _gap_band(gap) -> str:
     return ">10pt"
 
 
-def build_learning_review(rows: list[dict]) -> dict:
+def build_learning_review(rows: list[dict], board_context: dict | None = None) -> dict:
     """Descriptive win/loss breakdowns over one date's canonical graded rows."""
     decided = [r for r in rows if r.get("result") in (WIN, LOSS)]
     pitcher = [r for r in decided if r.get("family") == "pitcher_k"]
@@ -1105,7 +1224,116 @@ def build_learning_review(rows: list[dict]) -> dict:
             lambda r: (r.get("opp_status") or {}).get("status") or "na",
         ),
     }
-    return {"decided": len(decided), "groups": groups, "markdown": render_learning_markdown(decided, groups)}
+    movement = build_market_movement(rows, board_context or {})
+    audit = build_input_audit(rows)
+    return {
+        "decided": len(decided),
+        "groups": groups,
+        "market_movement": movement,
+        "input_audit": audit,
+        "markdown": render_learning_markdown(decided, groups, movement, audit),
+    }
+
+
+def build_market_movement(rows: list[dict], board_context: dict[tuple[str, str], dict]) -> dict:
+    """Compare noon and afternoon captures; this is movement, not CLV."""
+    snapshots: dict[tuple[str, str], dict] = {}
+    for context in board_context.values():
+        slot = context.get("slot")
+        if slot not in ("noon", "afternoon"):
+            continue
+        row = context.get("row") or {}
+        snapshots[(canonical_market_key(row), slot)] = context
+
+    movements = []
+    for graded in rows:
+        logical_key = graded.get("canonical_key") or canonical_market_key(graded)
+        noon = snapshots.get((logical_key, "noon"))
+        afternoon = snapshots.get((logical_key, "afternoon"))
+        if noon is None or afternoon is None:
+            continue
+        noon_row, aft_row = noon["row"], afternoon["row"]
+        noon_pick = noon_row.get("pick")
+        noon_line, aft_line = noon_row.get("line"), aft_row.get("line")
+        same_line = _numeric_equal(noon_line, aft_line)
+        noon_market = noon.get("market_context") or {}
+        aft_market = afternoon.get("market_context") or {}
+        noon_p = (noon_market.get("probabilities") or {}).get(noon_pick)
+        aft_p = (aft_market.get("probabilities") or {}).get(noon_pick)
+        comparable = same_line and noon_p is not None and aft_p is not None
+        price_noon = (noon_market.get("prices") or {}).get(noon_pick)
+        price_aft = (aft_market.get("prices") or {}).get(noon_pick)
+        price_comparable = same_line and price_noon is not None and price_aft is not None
+        movements.append({
+            "canonical_key": logical_key,
+            "family": graded.get("family"),
+            "subject": graded.get("subject"),
+            "screen_date": graded.get("screen_date"),
+            "noon_pick": noon_pick,
+            "afternoon_pick": aft_row.get("pick"),
+            "side_changed": noon_pick != aft_row.get("pick"),
+            "noon_line": noon_line,
+            "afternoon_line": aft_line,
+            "line_changed": not same_line,
+            "noon_price": noon_row.get("price"),
+            "afternoon_price": aft_row.get("price"),
+            "noon_pick_market_p_noon": noon_p,
+            "noon_pick_market_p_afternoon": aft_p if same_line else None,
+            "noon_pick_market_p_delta": round(aft_p - noon_p, 6) if comparable else None,
+            "noon_pick_price_noon": price_noon,
+            "noon_pick_price_afternoon": price_aft if same_line else None,
+            "noon_pick_price_delta": price_aft - price_noon if price_comparable else None,
+            "market_probability_comparable": comparable,
+            "price_comparable": price_comparable,
+            "noon_input_audit": noon.get("input_audit"),
+            "afternoon_input_audit": afternoon.get("input_audit"),
+        })
+    comparable = [m for m in movements if m["market_probability_comparable"]]
+    return {
+        "interpretation": "Noon-to-afternoon market movement only; not closing-line value.",
+        "matched_markets": len(movements),
+        "same_side": sum(not m["side_changed"] for m in movements),
+        "side_changed": sum(m["side_changed"] for m in movements),
+        "line_changed": sum(m["line_changed"] for m in movements),
+        "probability_comparable": len(comparable),
+        "moved_toward_noon_pick": sum(m["noon_pick_market_p_delta"] > 0 for m in comparable),
+        "moved_against_noon_pick": sum(m["noon_pick_market_p_delta"] < 0 for m in comparable),
+        "movement_rows": movements,
+    }
+
+
+def _numeric_equal(left, right) -> bool:
+    try:
+        return float(left) == float(right)
+    except (TypeError, ValueError):
+        return left == right
+
+
+def build_input_audit(rows: list[dict]) -> dict:
+    by_family: dict[str, dict] = {}
+    for family in GRADEABLE_FAMILIES:
+        family_rows = [r for r in rows if r.get("family") == family]
+        audits = [r.get("input_audit") or {} for r in family_rows]
+        source_match = [a for a in audits if a.get("market_probability_source_match") is not None]
+        price_match = [a for a in audits if a.get("price_source_match") is not None]
+        by_family[family] = {
+            "rows": len(family_rows),
+            "board_joined": sum(bool(a.get("board_found")) for a in audits),
+            "exact_source_joined": sum(bool(a.get("recorded_input_found")) for a in audits),
+            "missing_exact_source": sum(not bool(a.get("recorded_input_found")) for a in audits),
+            "market_probability_checked": len(source_match),
+            "market_probability_matches_source": sum(bool(a.get("market_probability_source_match")) for a in source_match),
+            "prices_checked": len(price_match),
+            "prices_match_source": sum(bool(a.get("price_source_match")) for a in price_match),
+        }
+    total = len(rows)
+    return {
+        "rows": total,
+        "board_joined": sum(v["board_joined"] for v in by_family.values()),
+        "exact_source_joined": sum(v["exact_source_joined"] for v in by_family.values()),
+        "missing_exact_source": sum(v["missing_exact_source"] for v in by_family.values()),
+        "by_family": by_family,
+    }
 
 
 LEARNING_SECTIONS = (
@@ -1122,7 +1350,7 @@ LEARNING_SECTIONS = (
 )
 
 
-def render_learning_markdown(decided: list[dict], groups: dict) -> str:
+def render_learning_markdown(decided: list[dict], groups: dict, movement: dict, audit: dict) -> str:
     lines = ["## Daily learning review", ""]
     lines.append(f"Decided plays: {len(decided)}")
     lines.append("")
@@ -1137,6 +1365,51 @@ def render_learning_markdown(decided: list[dict], groups: dict) -> str:
             hit = f"{stats['hit']:.0%}" if stats["hit"] is not None else "-"
             lines.append(f"| {bucket} | {stats['n']} | {stats['wins']}-{stats['losses']} | {hit} | {stats['units']:+.2f} |")
         lines.append("")
+    lines.append("### Noon-to-afternoon market movement")
+    lines.append(movement.get("interpretation", "Market movement only; not closing-line value."))
+    lines.append("")
+    lines.append(
+        f"Matched markets: {movement.get('matched_markets', 0)}; "
+        f"same-side: {movement.get('same_side', 0)}; "
+        f"side changed: {movement.get('side_changed', 0)}; "
+        f"line changed: {movement.get('line_changed', 0)}; "
+        f"same-line probability comparisons: {movement.get('probability_comparable', 0)}; "
+        f"market moved toward noon side: {movement.get('moved_toward_noon_pick', 0)}; "
+        f"against noon side: {movement.get('moved_against_noon_pick', 0)}."
+    )
+    lines.append("")
+    if movement.get("movement_rows"):
+        lines.append("| market | noon → afternoon side | line | board price noon → aft | noon-side price noon → aft | noon-side market-p Δ |")
+        lines.append("|---|---|---|---|---|---:|")
+        for item in movement["movement_rows"]:
+            label = item.get("subject") or item.get("canonical_key")
+            line_text = f"{item.get('noon_line')} → {item.get('afternoon_line')}"
+            price_text = f"{item.get('noon_price')} → {item.get('afternoon_price')}"
+            noon_side_price_text = f"{item.get('noon_pick_price_noon')} → {item.get('noon_pick_price_afternoon')}"
+            delta = item.get("noon_pick_market_p_delta")
+            delta_text = f"{delta:+.3f}" if delta is not None else "not comparable"
+            lines.append(
+                f"| {label} ({item.get('family')}) | {item.get('noon_pick')} → {item.get('afternoon_pick')} | "
+                f"{line_text} | {price_text} | {noon_side_price_text} | {delta_text} |"
+            )
+        lines.append("")
+
+    lines.append("### Exact input-join audit")
+    lines.append(
+        f"Board joins: {audit.get('board_joined', 0)}/{audit.get('rows', 0)}; "
+        f"exact recorded-source joins: {audit.get('exact_source_joined', 0)}/{audit.get('rows', 0)}; "
+        f"missing exact source: {audit.get('missing_exact_source', 0)}."
+    )
+    lines.append("")
+    lines.append("| family | rows | exact source | missing source | prices checked/match | market-p checked/match |")
+    lines.append("|---|---:|---:|---:|---:|---:|")
+    for family, stats in audit.get("by_family", {}).items():
+        lines.append(
+            f"| {family} | {stats['rows']} | {stats['exact_source_joined']} | {stats['missing_exact_source']} | "
+            f"{stats['prices_checked']}/{stats['prices_match_source']} | "
+            f"{stats['market_probability_checked']}/{stats['market_probability_matches_source']} |"
+        )
+    lines.append("")
     return "\n".join(lines)
 
 
