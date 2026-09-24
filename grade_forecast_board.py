@@ -313,6 +313,54 @@ class MlbClient:
 
 # ----------------------------------------------------------- ledger io
 
+BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
+# Prediction fields the grader enriches rows with; older ledger rows predate
+# them, so the board artifact is used as a read-only fallback.
+CONTEXT_FIELDS = (
+    "market_p",
+    "ev",
+    "ev_flag",
+    "projected_strikeouts",
+    "projected_outs",
+    "projected_batters_faced",
+    "projected_k_rate",
+    "opportunity_confidence",
+)
+
+
+def load_board_context(screen: str) -> dict[tuple[str, str], dict]:
+    """Latest board row per (run_id, proposition_id) for a screen date."""
+    context: dict[tuple[str, str], dict] = {}
+    if not BOARD_DIR.exists():
+        return context
+    for path in sorted(BOARD_DIR.glob(f"forecast_board_{screen}*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if payload.get("screen_date") != screen:
+            continue
+        run_id = str(payload.get("run_id"))
+        is_slot = str(run_id).endswith(("-noon", "-afternoon"))
+        for section in (payload.get("sections") or {}).values():
+            for row in section:
+                key = (run_id, str(row.get("proposition_id")))
+                # Prefer a real slot board over a legacy one when both exist.
+                if key in context and not is_slot:
+                    continue
+                context[key] = row
+    return context
+
+
+def enrich_context(row: dict, context: dict[tuple[str, str], dict]) -> dict:
+    board_row = context.get((str(row.get("run_id")), str(row.get("proposition_id"))))
+    if not board_row:
+        return row
+    for field in CONTEXT_FIELDS:
+        if row.get(field) is None and board_row.get(field) is not None:
+            row[field] = board_row.get(field)
+    return row
+
 
 def load_screen_rows(screen: str) -> list[dict]:
     forecast: dict[tuple[str, str], dict] = {}
@@ -356,6 +404,11 @@ def load_screen_rows(screen: str) -> list[dict]:
     for key, (index, roi_row) in roi.items():
         if key not in forecast:
             rows.append({**roi_row, "_roi_index": index})
+
+    context = load_board_context(screen)
+    if context:
+        for row in rows:
+            enrich_context(row, context)
     return rows
 
 

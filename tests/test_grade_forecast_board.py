@@ -195,6 +195,44 @@ class GradeRowTests(unittest.TestCase):
         self.assertAlmostEqual(graded["result_margin"], 2.0)
 
 
+class BoardContextFallbackTests(unittest.TestCase):
+    def test_ledger_rows_fall_back_to_board_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            boards = root / "forecast_boards"
+            boards.mkdir()
+            (boards / "forecast_board_2026-09-22_noon.json").write_text(json.dumps({
+                "run_id": "board-2026-09-22-noon",
+                "screen_date": "2026-09-22",
+                "sections": {"pitcher_k": [{
+                    "proposition_id": "p:1:test:5.5",
+                    "market_p": 0.52, "ev_flag": "thin",
+                    "projected_batters_faced": 24.0, "projected_k_rate": 0.27,
+                }]},
+            }))
+            forecast = root / "forecast.jsonl"
+            forecast.write_text(json.dumps({
+                "run_id": "board-2026-09-22-noon", "screen_date": "2026-09-22",
+                "family": "pitcher_k", "proposition_id": "p:1:test:5.5",
+                "pick": "under", "line": 5.5, "price": -110,
+            }) + "\n")
+            roi = root / "roi.jsonl"
+            roi.write_text(json.dumps({
+                "run_id": "board-2026-09-22-noon", "screen_date": "2026-09-22",
+                "family": "pitcher_k", "proposition_id": "p:1:test:5.5",
+                "pick": "under", "line": 5.5, "price": -110,
+                "outcome": "PENDING", "graded": False,
+            }) + "\n")
+            with mock.patch.object(grade, "FORECAST_LEDGER", forecast), \
+                 mock.patch.object(grade, "ROI_LEDGER", roi), \
+                 mock.patch.object(grade, "BOARD_DIR", boards):
+                rows = grade.load_screen_rows("2026-09-22")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["market_p"], 0.52)
+        self.assertEqual(rows[0]["ev_flag"], "thin")
+        self.assertEqual(rows[0]["projected_batters_faced"], 24.0)
+
+
 class ParseStandingsTests(unittest.TestCase):
     def test_parse_and_lookup(self) -> None:
         payload = {"records": [{"teamRecords": [
