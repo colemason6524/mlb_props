@@ -126,6 +126,89 @@ def settle_units(result: str, price: int | None) -> float | None:
     return None
 
 
+def _team_meta(team: dict) -> dict:
+    return {
+        "id": str(team.get("id")) if team.get("id") is not None else None,
+        "name": team.get("name"),
+        "abbr": team.get("abbreviation") or team.get("teamCode"),
+    }
+
+
+def parse_standings(payload: dict) -> dict:
+    """Pure parse of the MLB standings payload into id/abbr lookups."""
+    by_id: dict[str, dict] = {}
+    by_abbr: dict[str, dict] = {}
+    for record in (payload or {}).get("records", []) or []:
+        for team in record.get("teamRecords", []) or []:
+            info = team.get("team", {}) or {}
+            indicator = team.get("clinchIndicator")
+            if indicator in ("y", "z"):
+                status = "clinched_division"
+            elif indicator == "x":
+                status = "clinched_playoff"
+            elif indicator == "e":
+                status = "eliminated"
+            else:
+                status = "contending"
+            entry = {
+                "team_id": str(info.get("id")) if info.get("id") is not None else None,
+                "name": info.get("name"),
+                "abbr": info.get("abbreviation"),
+                "wins": team.get("wins"),
+                "losses": team.get("losses"),
+                "division_rank": team.get("divisionRank"),
+                "wildcard_rank": team.get("wildCardRank"),
+                "games_back": team.get("gamesBack"),
+                "wc_games_back": team.get("wildCardGamesBack"),
+                "elimination_number": team.get("eliminationNumber"),
+                "clinch_indicator": indicator,
+                "status": status,
+            }
+            if entry["team_id"]:
+                by_id[entry["team_id"]] = entry
+            if entry["abbr"]:
+                by_abbr[entry["abbr"]] = entry
+    return {"by_id": by_id, "by_abbr": by_abbr}
+
+
+def lookup_team_status(standings: dict | None, team_meta: dict | None) -> dict | None:
+    if not standings or not team_meta:
+        return None
+    by_id = standings.get("by_id") or {}
+    by_abbr = standings.get("by_abbr") or {}
+    tid = team_meta.get("id")
+    if tid is not None and str(tid) in by_id:
+        return by_id[str(tid)]
+    abbr = team_meta.get("abbr")
+    if abbr and abbr in by_abbr:
+        return by_abbr[abbr]
+    return None
+
+
+def result_margin(family: str, pick: str, line, home: int, away: int, strikeouts: int | None) -> float | None:
+    """Signed distance from the line toward the picked side (positive = winning)."""
+    try:
+        if family == "pitcher_k":
+            if strikeouts is None or line is None:
+                return None
+            return round(strikeouts - float(line), 2) if pick == "over" else round(float(line) - strikeouts, 2)
+        if family == "game_total":
+            if line is None:
+                return None
+            total = home + away
+            return round(total - float(line), 2) if pick == "over" else round(float(line) - total, 2)
+        if family == "game_ml":
+            return float(home - away) if pick == "home" else float(away - home)
+        if family == "game_rl":
+            if line is None:
+                return None
+            cover = (home - away) + float(line)
+            return round(cover, 2) if pick == "home_covers" else round(-cover, 2)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
 def parse_proposition_id(proposition_id: str) -> dict | None:
     parts = str(proposition_id or "").split(":")
     if len(parts) >= 4 and parts[0] == "p":
@@ -180,31 +263,51 @@ class MlbClient:
                     "state": status.get("detailedState") or status.get("abstractGameState") or "",
                     "home_score": home.get("score"),
                     "away_score": away.get("score"),
+                    "home_team": _team_meta(home.get("team") or {}),
+                    "away_team": _team_meta(away.get("team") or {}),
                 }
         return out
+
+    def standings(self, screen: str) -> dict:
+        """Historical team situation for the screen date (one API call)."""
+        payload = self._fetch(
+            f"{STATS_BASE}/standings?leagueId=103,104&season=2026"
+            f"&date={screen}&standingsTypes=regularSeason&hydrate=team"
+        )
+        return parse_standings(payload)
 
     def pitcher_lookup(self, game_pk: str, subject_id: int | None, name_key: str | None) -> dict:
         box = self.boxscore(game_pk)
         match = None
+        match_side = None
         for side in ("home", "away"):
             for player in ((box.get("teams") or {}).get(side) or {}).get("players", {}).values():
                 person = player.get("person") or {}
                 if subject_id is not None and person.get("id") == subject_id:
                     match = player
+                    match_side = side
                     break
                 if name_key and match_key(person.get("fullName") or "") == match_key(name_key):
                     match = player
+                    match_side = side
                     break
             if match is not None:
                 break
         if match is None:
-            return {"found": False, "appeared": False, "strikeouts": None}
+            return {"found": False, "appeared": False, "strikeouts": None, "side": None}
         pitching = (match.get("stats") or {}).get("pitching") or {}
         appeared = bool(pitching)
         return {
             "found": True,
             "appeared": appeared,
             "strikeouts": int(pitching.get("strikeOuts") or 0) if appeared else None,
+            "outs": pitching.get("outs"),
+            "batters_faced": pitching.get("battersFaced"),
+            "pitches": pitching.get("numberOfPitches"),
+            "hits": pitching.get("hits"),
+            "walks": pitching.get("baseOnBalls"),
+            "earned_runs": pitching.get("earnedRuns"),
+            "side": match_side,
         }
 
 
@@ -500,7 +603,12 @@ def select_canonical_rows(
     return selected, superseded, stats
 
 
-def grade_row(row: dict, finals: dict[str, dict], client: MlbClient) -> dict:
+def grade_row(
+    row: dict,
+    finals: dict[str, dict],
+    client: MlbClient,
+    standings: dict | None = None,
+) -> dict:
     meta = _resolve_meta(row)
     graded = {
         "run_id": row.get("run_id"),
@@ -510,6 +618,9 @@ def grade_row(row: dict, finals: dict[str, dict], client: MlbClient) -> dict:
         "line": meta.get("line", row.get("line")),
         "price": row.get("price"),
         "p_pick": row.get("p_pick"),
+        "market_p": row.get("market_p"),
+        "ev": row.get("ev"),
+        "ev_flag": row.get("ev_flag"),
         "subject": row.get("subject"),
         "game_pk": meta.get("game_pk"),
         "_roi_index": row.get("_roi_index"),
@@ -529,6 +640,7 @@ def grade_row(row: dict, finals: dict[str, dict], client: MlbClient) -> dict:
 
     home, away = int(info["home_score"]), int(info["away_score"])
     family = meta.get("family")
+    strikeouts = None
     if family == "pitcher_k":
         lookup = client.pitcher_lookup(game_pk, row.get("subject_id"), meta.get("name_key"))
         if not lookup["found"]:
@@ -538,8 +650,30 @@ def grade_row(row: dict, finals: dict[str, dict], client: MlbClient) -> dict:
             graded.update({"result": VOID, "units": 0.0, "detail": "pitcher did not appear"})
             return graded
         line = float(meta.get("line"))
-        result = grade_pitcher_k(row.get("pick"), line, lookup["strikeouts"])
-        graded.update({"result": result, "units": None, "detail": f"{lookup['strikeouts']} K vs {line}"})
+        strikeouts = lookup["strikeouts"]
+        result = grade_pitcher_k(row.get("pick"), line, strikeouts)
+        graded.update({"result": result, "units": None, "detail": f"{strikeouts} K vs {line}"})
+        graded["actual"] = {
+            "strikeouts": lookup.get("strikeouts"),
+            "outs": lookup.get("outs"),
+            "batters_faced": lookup.get("batters_faced"),
+            "pitches": lookup.get("pitches"),
+            "hits": lookup.get("hits"),
+            "walks": lookup.get("walks"),
+            "earned_runs": lookup.get("earned_runs"),
+        }
+        graded["projected_strikeouts"] = row.get("projected_strikeouts")
+        graded["projected_outs"] = row.get("projected_outs")
+        graded["projected_batters_faced"] = row.get("projected_batters_faced")
+        graded["projected_k_rate"] = row.get("projected_k_rate")
+        graded["opportunity_confidence"] = row.get("opportunity_confidence")
+        side = lookup.get("side")
+        team_meta = info.get("home_team") if side == "home" else info.get("away_team")
+        opp_meta = info.get("away_team") if side == "home" else info.get("home_team")
+        graded["team"] = (team_meta or {}).get("name")
+        graded["opponent"] = (opp_meta or {}).get("name")
+        graded["team_status"] = lookup_team_status(standings, team_meta)
+        graded["opp_status"] = lookup_team_status(standings, opp_meta)
     elif family == "game_ml":
         result = grade_moneyline(row.get("pick"), home, away)
         graded.update({"result": result, "units": None, "detail": f"{away}-{home}"})
@@ -555,6 +689,13 @@ def grade_row(row: dict, finals: dict[str, dict], client: MlbClient) -> dict:
         graded.update({"result": ERROR, "units": None, "detail": "unknown family"})
         return graded
 
+    if family and family.startswith("game"):
+        graded["home_team"] = (info.get("home_team") or {}).get("name")
+        graded["away_team"] = (info.get("away_team") or {}).get("name")
+        graded["home_status"] = lookup_team_status(standings, info.get("home_team"))
+        graded["away_status"] = lookup_team_status(standings, info.get("away_team"))
+
+    graded["result_margin"] = result_margin(family, row.get("pick"), meta.get("line"), home, away, strikeouts)
     graded["units"] = settle_units(graded["result"], row.get("price"))
     return graded
 
@@ -627,6 +768,14 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
         api_error = True
         print(f"ERROR: schedule fetch failed: {type(exc).__name__}: {exc}")
 
+    standings = None
+    try:
+        if hasattr(client, "standings"):
+            standings = client.standings(screen)
+    except Exception as exc:  # noqa: BLE001 - context is optional, never blocks grading
+        standings = None
+        print(f"WARN: standings fetch failed: {type(exc).__name__}: {exc}")
+
     rows = load_screen_rows(screen)
     # Game start times bound canonical selection to pregame snapshots.
     start_by_pk: dict[str, datetime] = {}
@@ -650,7 +799,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
             if family not in GRADEABLE_FAMILIES:
                 continue
             try:
-                graded = grade_row(row, finals, client)
+                graded = grade_row(row, finals, client, standings)
             except Exception as exc:  # noqa: BLE001 - one bad row must not kill the run
                 api_error = True
                 graded = {
@@ -692,7 +841,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
         graded = all_graded_by_id.get(lookup)
         if graded is None:
             try:
-                graded = grade_row(selected_row, finals, client)
+                graded = grade_row(selected_row, finals, client, standings)
             except Exception as exc:  # noqa: BLE001 - keep canonical robust
                 api_error = True
                 graded = {
@@ -714,6 +863,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
     canonical_summary = summarize(canonical_rows) if canonical_rows else None
     canonical_roi = roi_summary(canonical_rows) if canonical_rows else None
     settlements = [r for r in canonical_rows if r.get("_roi_index") is not None]
+    learning = build_learning_review(canonical_rows) if canonical_rows else None
 
     latest = latest_run_id(list(revisions.keys()))
     pending_total = sum(r["summary"]["totals"]["pending"] for r in revisions.values())
@@ -735,9 +885,153 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
             "selection": selection_stats,
             "pending": canonical_pending,
         },
+        "learning": learning,
         "superseded": superseded_markers,
     }
     return result
+
+
+# -------------------------------------------------------- learning review
+
+
+def _bucket_stats(rows: list[dict]) -> dict:
+    decided = [r for r in rows if r.get("result") in (WIN, LOSS)]
+    wins = sum(r["result"] == WIN for r in decided)
+    priced = [r for r in decided if r.get("units") is not None]
+    units = sum(r.get("units") or 0.0 for r in priced)
+    return {
+        "n": len(decided),
+        "wins": wins,
+        "losses": len(decided) - wins,
+        "hit": round(wins / len(decided), 4) if decided else None,
+        "units": round(units, 3),
+    }
+
+
+def _group_table(rows: list[dict], key_fn) -> dict:
+    groups: dict = defaultdict(list)
+    for row in rows:
+        groups[key_fn(row)].append(row)
+    return {key: _bucket_stats(group) for key, group in sorted(groups.items(), key=lambda kv: str(kv[0]))}
+
+
+def pitcher_bucket(row: dict) -> str:
+    """Attribute a pitcher K result to workload vs strikeout-rate conversion."""
+    actual = row.get("actual") or {}
+    actual_k = actual.get("strikeouts")
+    actual_bf = actual.get("batters_faced")
+    proj_bf = row.get("projected_batters_faced")
+    proj_k = row.get("projected_strikeouts")
+    proj_k_rate = row.get("projected_k_rate")
+    if None in (actual_k, actual_bf, proj_bf, proj_k):
+        return "no_data"
+    if proj_k_rate is None:
+        proj_k_rate = proj_k / proj_bf if proj_bf else None
+    if proj_k_rate is None:
+        return "no_data"
+    expected_at_actual_bf = proj_k_rate * actual_bf
+    opportunity = expected_at_actual_bf - proj_k
+    conversion = actual_k - expected_at_actual_bf
+    sign = 1.0 if row.get("pick") == "over" else -1.0
+    opportunity *= sign
+    conversion *= sign
+    if opportunity <= -1.0 and opportunity <= conversion:
+        return "workload_short"
+    if conversion <= -1.0 and conversion < opportunity:
+        return "conversion_cold"
+    if opportunity >= 1.0 and opportunity >= conversion:
+        return "workload_long"
+    if conversion >= 1.0 and conversion > opportunity:
+        return "conversion_hot"
+    return "near_line"
+
+
+def _price_band(price) -> str:
+    if price is None:
+        return "na"
+    if price < -150:
+        return "<-150"
+    if price < -110:
+        return "-150..-110"
+    if price <= 100:
+        return "-110..+100"
+    if price <= 150:
+        return "+100..+150"
+    return ">+150"
+
+
+def _gap_band(gap) -> str:
+    if gap is None:
+        return "na"
+    if gap < -0.05:
+        return "<-5pt"
+    if gap < 0.0:
+        return "-5..0pt"
+    if gap < 0.05:
+        return "0..5pt"
+    if gap < 0.10:
+        return "5..10pt"
+    return ">10pt"
+
+
+def build_learning_review(rows: list[dict]) -> dict:
+    """Descriptive win/loss breakdowns over one date's canonical graded rows."""
+    decided = [r for r in rows if r.get("result") in (WIN, LOSS)]
+    pitcher = [r for r in decided if r.get("family") == "pitcher_k"]
+    groups = {
+        "overall": {"all": _bucket_stats(decided)},
+        "by_family": _group_table(decided, lambda r: r.get("family")),
+        "by_side": _group_table(decided, lambda r: f"{r.get('family')}:{r.get('pick')}"),
+        "by_ev_flag": _group_table(decided, lambda r: r.get("ev_flag") or "na"),
+        "by_price_band": _group_table(decided, lambda r: _price_band(r.get("price"))),
+        "by_gap_band": _group_table(
+            [r for r in decided if r.get("market_p") is not None and r.get("p_pick") is not None],
+            lambda r: _gap_band(r["p_pick"] - r["market_p"]),
+        ),
+        "pitcher_by_bucket": _group_table(pitcher, pitcher_bucket),
+        "pitcher_by_opportunity": _group_table(pitcher, lambda r: r.get("opportunity_confidence") or "na"),
+        "by_team_status": _group_table(
+            [r for r in decided if r.get("team_status")],
+            lambda r: (r.get("team_status") or {}).get("status") or "na",
+        ),
+        "by_opp_status": _group_table(
+            [r for r in decided if r.get("opp_status")],
+            lambda r: (r.get("opp_status") or {}).get("status") or "na",
+        ),
+    }
+    return {"decided": len(decided), "groups": groups, "markdown": render_learning_markdown(decided, groups)}
+
+
+LEARNING_SECTIONS = (
+    ("Overall", "overall"),
+    ("By family", "by_family"),
+    ("By side", "by_side"),
+    ("By EV flag", "by_ev_flag"),
+    ("By price band", "by_price_band"),
+    ("By model-market gap", "by_gap_band"),
+    ("Pitcher by workload/conversion", "pitcher_by_bucket"),
+    ("Pitcher by opportunity confidence", "pitcher_by_opportunity"),
+    ("By pitcher team situation", "by_team_status"),
+    ("By opponent situation", "by_opp_status"),
+)
+
+
+def render_learning_markdown(decided: list[dict], groups: dict) -> str:
+    lines = ["## Daily learning review", ""]
+    lines.append(f"Decided plays: {len(decided)}")
+    lines.append("")
+    for label, key in LEARNING_SECTIONS:
+        table = groups.get(key) or {}
+        if not table:
+            continue
+        lines.append(f"### {label}")
+        lines.append("| bucket | n | W-L | hit | units |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for bucket, stats in table.items():
+            hit = f"{stats['hit']:.0%}" if stats["hit"] is not None else "-"
+            lines.append(f"| {bucket} | {stats['n']} | {stats['wins']}-{stats['losses']} | {hit} | {stats['units']:+.2f} |")
+        lines.append("")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------- reporting
@@ -871,12 +1165,20 @@ def main(argv: list[str] | None = None) -> int:
     (GRADES_DIR / f"forecast_board_{screen}.json").write_text(
         json.dumps(result, indent=1, default=str)
     )
+    learning = result.get("learning")
+    if learning:
+        (GRADES_DIR / f"learning_review_{screen}.json").write_text(
+            json.dumps(learning, indent=1, default=str)
+        )
+        (GRADES_DIR / f"learning_review_{screen}.md").write_text(learning["markdown"])
     changed = settle_roi_ledger(ROI_LEDGER, result["settlements"])
     changed += mark_superseded_rows(ROI_LEDGER, result.get("superseded") or [])
 
     recap = render_recap(result)
     print(recap)
     print(f"\ngraded {screen}: ledger updates {changed}, api_error={result['api_error']}")
+    if learning:
+        print(learning["markdown"])
 
     if result["api_error"]:
         record_run(

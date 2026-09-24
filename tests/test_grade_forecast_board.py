@@ -157,6 +157,103 @@ class GradeRowTests(unittest.TestCase):
         graded = grade.grade_row(row, FINALS, client)
         self.assertEqual(graded["result"], grade.VOID)
 
+    def test_pitcher_records_full_line_and_team_status(self) -> None:
+        client = FakeClient(pitcher={"1": {
+            "found": True, "appeared": True, "strikeouts": 7, "outs": 18,
+            "batters_faced": 24, "pitches": 95, "hits": 5, "walks": 2,
+            "earned_runs": 2, "side": "home",
+        }})
+        finals = {"1": {
+            "final": True, "state": "Final", "home_score": 5, "away_score": 3,
+            "home_team": {"id": "1", "name": "Home Team", "abbr": "HOM"},
+            "away_team": {"id": "2", "name": "Away Team", "abbr": "AWY"},
+        }}
+        standings = {"by_id": {"1": {"status": "contending"}}, "by_abbr": {"AWY": {"status": "clinched_playoff"}}}
+        row = self._row(
+            family="pitcher_k", proposition_id="p:1:testpitcher:5.5", pick="over", line=5.5,
+            projected_strikeouts=6.5, projected_batters_faced=24.0, projected_k_rate=0.27,
+        )
+        graded = grade.grade_row(row, finals, client, standings)
+        self.assertEqual(graded["result"], grade.WIN)
+        self.assertEqual(graded["actual"]["batters_faced"], 24)
+        self.assertEqual(graded["team_status"]["status"], "contending")
+        self.assertEqual(graded["opp_status"]["status"], "clinched_playoff")
+        self.assertAlmostEqual(graded["result_margin"], 1.5)
+
+    def test_game_row_records_team_status_and_margin(self) -> None:
+        finals = {"1": {
+            "final": True, "state": "Final", "home_score": 5, "away_score": 3,
+            "home_team": {"id": "1", "name": "Home Team", "abbr": "HOM"},
+            "away_team": {"id": "2", "name": "Away Team", "abbr": "AWY"},
+        }}
+        standings = {"by_id": {"1": {"status": "contending"}, "2": {"status": "eliminated"}}, "by_abbr": {}}
+        row = self._row(proposition_id="g:1:ml", pick="home")
+        graded = grade.grade_row(row, finals, FakeClient(), standings)
+        self.assertEqual(graded["result"], grade.WIN)
+        self.assertEqual(graded["home_status"]["status"], "contending")
+        self.assertEqual(graded["away_status"]["status"], "eliminated")
+        self.assertAlmostEqual(graded["result_margin"], 2.0)
+
+
+class ParseStandingsTests(unittest.TestCase):
+    def test_parse_and_lookup(self) -> None:
+        payload = {"records": [{"teamRecords": [
+            {"team": {"id": 1, "name": "A", "abbreviation": "AAA"}, "wins": 90, "losses": 60,
+             "clinchIndicator": "x", "divisionRank": "1", "wildCardGamesBack": "-"},
+        ]}]}
+        parsed = grade.parse_standings(payload)
+        status = grade.lookup_team_status(parsed, {"id": "1", "abbr": "AAA"})
+        self.assertEqual(status["status"], "clinched_playoff")
+        self.assertEqual(status["wins"], 90)
+
+
+class LearningReviewTests(unittest.TestCase):
+    def _decided(self, **overrides):
+        base = {
+            "family": "pitcher_k",
+            "pick": "over",
+            "line": 5.5,
+            "price": -110,
+            "p_pick": 0.60,
+            "market_p": 0.50,
+            "ev_flag": "playable",
+            "result": grade.WIN,
+            "units": 100 / 110,
+            "result_margin": 1.5,
+            "projected_strikeouts": 6.5,
+            "projected_batters_faced": 24.0,
+            "projected_k_rate": 0.27,
+            "actual": {"strikeouts": 7, "batters_faced": 24, "outs": 18, "pitches": 95},
+        }
+        base.update(overrides)
+        return base
+
+    def test_margin_toward_picked_side(self) -> None:
+        self.assertAlmostEqual(grade.result_margin("pitcher_k", "over", 5.5, 0, 0, 7), 1.5)
+        self.assertAlmostEqual(grade.result_margin("pitcher_k", "under", 5.5, 0, 0, 4), 1.5)
+        self.assertAlmostEqual(grade.result_margin("game_total", "over", 8.0, 5, 4, None), 1.0)
+        self.assertAlmostEqual(grade.result_margin("game_ml", "away", None, 3, 5, None), 2.0)
+        self.assertAlmostEqual(grade.result_margin("game_rl", "away_covers", -1.5, 4, 3, None), 0.5)
+
+    def test_pitcher_bucket_attributes_conversion_vs_workload(self) -> None:
+        # 24 BF but K rate well below projection -> conversion cold on an over.
+        cold = self._decided(projected_k_rate=0.35, actual={"strikeouts": 4, "batters_faced": 24})
+        self.assertEqual(grade.pitcher_bucket(cold), "conversion_cold")
+        # Pulled early (14 BF vs 24 projected) -> workload short regardless of Ks.
+        short = self._decided(projected_k_rate=0.27, actual={"strikeouts": 3, "batters_faced": 14})
+        self.assertEqual(grade.pitcher_bucket(short), "workload_short")
+
+    def test_learning_review_groups_and_markdown(self) -> None:
+        rows = [
+            self._decided(result=grade.WIN),
+            self._decided(result=grade.LOSS, units=-1.0),
+        ]
+        review = grade.build_learning_review(rows)
+        self.assertEqual(review["decided"], 2)
+        self.assertEqual(review["groups"]["by_family"]["pitcher_k"]["n"], 2)
+        self.assertIn("Daily learning review", review["markdown"])
+        self.assertIn("Pitcher by workload/conversion", review["markdown"])
+
 
 class SummaryTests(unittest.TestCase):
     def test_summarize_counts_and_hit_rate(self) -> None:

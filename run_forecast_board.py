@@ -80,6 +80,21 @@ def expected_value_with_push(p_win: float | None, p_loss: float | None, price: i
     return p_win * payout - p_loss
 
 
+def no_vig_prob(price_a: int | None, price_b: int | None) -> tuple[float | None, float | None]:
+    """Two-way no-vig probabilities from a both-sides American price pair."""
+    p_a, p_b = american_prob(price_a), american_prob(price_b)
+    if p_a is None or p_b is None or (p_a + p_b) <= 0:
+        return None, None
+    return p_a / (p_a + p_b), p_b / (p_a + p_b)
+
+
+def american_prob(price: int | None) -> float | None:
+    if price is None:
+        return None
+    p = float(price)
+    return 100.0 / (p + 100.0) if p > 0 else (-p) / (-p + 100.0)
+
+
 def ev_flag(ev: float | None) -> str:
     if ev is None:
         return "unpriced"
@@ -263,6 +278,7 @@ def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
         shadow = cand.get("price_shadow") or {}
         price = shadow.get("over_price") if side == "over" else shadow.get("under_price")
         ev = expected_value(p_side, price)
+        market_p = shadow.get("over_no_vig_probability") if side == "over" else shadow.get("under_no_vig_probability")
         rows.append({
             "family": "pitcher_k",
             "proposition_id": f"p:{features.game_pk or 'nogame'}:{norm_name(features.pitcher_name)}:{features.line}",
@@ -283,6 +299,12 @@ def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
             "captured_at": shadow.get("price_collected_at"),
             "ev": round(ev, 4) if ev is not None else None,
             "ev_flag": ev_flag(ev),
+            "market_p": round(market_p, 4) if market_p is not None else None,
+            "projected_strikeouts": cand.get("projected_strikeouts"),
+            "projected_outs": cand.get("projected_outs"),
+            "projected_batters_faced": cand.get("projected_batters_faced"),
+            "projected_k_rate": cand.get("projected_k_rate"),
+            "opportunity_confidence": (cand.get("opportunity_shadow") or {}).get("opportunity_confidence"),
             "engine_version": probs.version,
             "model_side_vs_export_side": cand.get("side"),
         })
@@ -356,6 +378,8 @@ def game_rows(
         ml_pick = "home" if forecast.p_home >= forecast.p_away else "away"
         ml_price = moneyline.get("price_a") if ml_pick == "home" else moneyline.get("price_b")
         ml_ev = expected_value(forecast.p_home if ml_pick == "home" else forecast.p_away, ml_price)
+        ml_novig_home, ml_novig_away = no_vig_prob(moneyline.get("price_a"), moneyline.get("price_b"))
+        ml_market_p = ml_novig_home if ml_pick == "home" else ml_novig_away
         rows.append({
             "family": "game_ml",
             "proposition_id": f"g:{pk}:ml",
@@ -376,6 +400,7 @@ def game_rows(
             "captured_at": capture.get("exported_at"),
             "ev": round(ml_ev, 4) if ml_ev is not None else None,
             "ev_flag": ev_flag(ml_ev),
+            "market_p": round(ml_market_p, 4) if ml_market_p is not None else None,
             "engine_version": forecast.version,
             "mean_home_runs": round(forecast.mean_home_runs, 2),
             "mean_away_runs": round(forecast.mean_away_runs, 2),
@@ -383,6 +408,8 @@ def game_rows(
         if total.get("line") is not None and forecast.p_over is not None:
             total_pick = "over" if forecast.p_over >= (forecast.p_under or 0.0) else "under"
             total_price = total.get("price_a") if total_pick == "over" else total.get("price_b")
+            total_novig_over, total_novig_under = no_vig_prob(total.get("price_a"), total.get("price_b"))
+            total_market_p = total_novig_over if total_pick == "over" else total_novig_under
             # Push-aware EV: over pick win=p_over loss=p_under, vice versa. Push (1-p_over-p_under) refunds 0.
             if forecast.p_under is not None:
                 p_win_total = forecast.p_over if total_pick == "over" else forecast.p_under
@@ -413,6 +440,7 @@ def game_rows(
                 "captured_at": capture.get("exported_at"),
                 "ev": round(total_ev, 4) if total_ev is not None else None,
                 "ev_flag": ev_flag(total_ev),
+                "market_p": round(total_market_p, 4) if total_market_p is not None else None,
                 "engine_version": forecast.version,
                 "mean_home_runs": round(forecast.mean_home_runs, 2),
                 "mean_away_runs": round(forecast.mean_away_runs, 2),
@@ -420,6 +448,8 @@ def game_rows(
         if spread.get("line") is not None and forecast.p_home_cover_line is not None:
             rl_pick = "home_covers" if forecast.p_home_cover_line >= 0.5 else "away_covers"
             rl_price = spread.get("price_a") if rl_pick == "home_covers" else spread.get("price_b")
+            rl_novig_home, rl_novig_away = no_vig_prob(spread.get("price_a"), spread.get("price_b"))
+            rl_market_p = rl_novig_home if rl_pick == "home_covers" else rl_novig_away
             # Push-aware run-line EV using unconditional cover probabilities when available.
             if forecast.p_home_cover is not None and forecast.p_away_cover is not None:
                 if rl_pick == "home_covers":
@@ -449,6 +479,7 @@ def game_rows(
                 "captured_at": capture.get("exported_at"),
                 "ev": round(rl_ev, 4) if rl_ev is not None else None,
                 "ev_flag": ev_flag(rl_ev),
+                "market_p": round(rl_market_p, 4) if rl_market_p is not None else None,
                 "engine_version": forecast.version,
             })
     if as_of is not None:
@@ -807,6 +838,14 @@ def main(argv: list[str] | None = None) -> int:
             "pick": row["pick"],
             "line": row.get("line"),
             "p_pick": row.get("p_pick"),
+            "market_p": row.get("market_p"),
+            "ev": row.get("ev"),
+            "ev_flag": row.get("ev_flag"),
+            "projected_strikeouts": row.get("projected_strikeouts"),
+            "projected_outs": row.get("projected_outs"),
+            "projected_batters_faced": row.get("projected_batters_faced"),
+            "projected_k_rate": row.get("projected_k_rate"),
+            "opportunity_confidence": row.get("opportunity_confidence"),
             "engine_version": row.get("engine_version"),
             "price": row.get("price"),
             "book": row.get("book"),
