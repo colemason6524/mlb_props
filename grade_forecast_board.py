@@ -487,6 +487,7 @@ def load_board_context(screen: str) -> dict[tuple[str, str], dict]:
                     "market_probability_source_match": (
                         abs(market_delta) <= 0.001 if market_delta is not None else None
                     ),
+                    "market_probability_source_available": expected_market_p is not None,
                     "stored_market_p": stored_market_p,
                     "source_market_p": expected_market_p,
                     "market_p_delta": market_delta,
@@ -1323,6 +1324,7 @@ def build_input_audit(rows: list[dict]) -> dict:
             "missing_exact_source": sum(not bool(a.get("recorded_input_found")) for a in audits),
             "market_probability_checked": len(source_match),
             "market_probability_matches_source": sum(bool(a.get("market_probability_source_match")) for a in source_match),
+            "market_probability_source_available": sum(bool(a.get("market_probability_source_available")) for a in audits),
             "prices_checked": len(price_match),
             "prices_match_source": sum(bool(a.get("price_source_match")) for a in price_match),
         }
@@ -1401,13 +1403,14 @@ def render_learning_markdown(decided: list[dict], groups: dict, movement: dict, 
         f"missing exact source: {audit.get('missing_exact_source', 0)}."
     )
     lines.append("")
-    lines.append("| family | rows | exact source | missing source | prices checked/match | market-p checked/match |")
+    lines.append("| family | rows | exact source | missing source | prices checked/match | market-p available/checked/match |")
     lines.append("|---|---:|---:|---:|---:|---:|")
     for family, stats in audit.get("by_family", {}).items():
         lines.append(
             f"| {family} | {stats['rows']} | {stats['exact_source_joined']} | {stats['missing_exact_source']} | "
             f"{stats['prices_checked']}/{stats['prices_match_source']} | "
-            f"{stats['market_probability_checked']}/{stats['market_probability_matches_source']} |"
+            f"{stats['market_probability_source_available']}/{stats['market_probability_checked']}/"
+            f"{stats['market_probability_matches_source']} |"
         )
     lines.append("")
     return "\n".join(lines)

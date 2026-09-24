@@ -276,6 +276,7 @@ class BoardContextFallbackTests(unittest.TestCase):
         self.assertEqual(pctx["exact_source"]["candidate"]["projected_batters_faced"], 24.0)
         self.assertTrue(pctx["input_audit"]["recorded_input_found"])
         self.assertTrue(pctx["input_audit"]["market_probability_source_match"])
+        self.assertTrue(pctx["input_audit"]["market_probability_source_available"])
         self.assertTrue(pctx["input_audit"]["price_source_match"])
         gctx = context[("board-2026-09-22-noon", "g:1:ml")]
         self.assertTrue(gctx["input_audit"]["recorded_input_found"])
