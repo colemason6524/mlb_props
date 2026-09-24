@@ -362,6 +362,56 @@ def enrich_context(row: dict, context: dict[tuple[str, str], dict]) -> dict:
     return row
 
 
+def load_pitcher_projections(screen: str) -> dict:
+    """Pitcher projections from the day's export, keyed by game/subject/line.
+
+    The board rows and forecast ledger only carry the picked side; the source
+    candidate export is the only place the projected workload/K-rate survive.
+    """
+    history_dir = OUTPUTS_DIR / "history"
+    projections: dict[tuple, dict] = {}
+    if not history_dir.exists():
+        return projections
+    for path in sorted(history_dir.glob("pitcher_props_*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if payload.get("screen_date") != screen:
+            continue
+        for cand in payload.get("candidates") or []:
+            if str(cand.get("prop_type") or "") != "PITCHER_STRIKEOUTS":
+                continue
+            key = (
+                str(cand.get("event_id")),
+                match_key(cand.get("subject_name") or ""),
+                cand.get("line"),
+            )
+            projections[key] = {
+                "projected_strikeouts": cand.get("projected_strikeouts"),
+                "projected_outs": cand.get("projected_outs"),
+                "projected_batters_faced": cand.get("projected_batters_faced"),
+                "projected_k_rate": cand.get("projected_k_rate"),
+                "opportunity_confidence": (cand.get("opportunity_shadow") or {}).get("opportunity_confidence"),
+            }
+    return projections
+
+
+def enrich_pitcher_context(row: dict, projections: dict) -> dict:
+    if row.get("family") != "pitcher_k":
+        return row
+    meta = _resolve_meta(row)
+    name_key = meta.get("name_key") or match_key(str(row.get("subject") or ""))
+    key = (str(meta.get("game_pk") or ""), name_key, row.get("line"))
+    projection = projections.get(key)
+    if not projection:
+        return row
+    for field, value in projection.items():
+        if row.get(field) is None and value is not None:
+            row[field] = value
+    return row
+
+
 def load_screen_rows(screen: str) -> list[dict]:
     forecast: dict[tuple[str, str], dict] = {}
     if FORECAST_LEDGER.exists():
@@ -406,9 +456,12 @@ def load_screen_rows(screen: str) -> list[dict]:
             rows.append({**roi_row, "_roi_index": index})
 
     context = load_board_context(screen)
-    if context:
-        for row in rows:
+    projections = load_pitcher_projections(screen)
+    for row in rows:
+        if context:
             enrich_context(row, context)
+        if projections:
+            enrich_pitcher_context(row, projections)
     return rows
 
 
