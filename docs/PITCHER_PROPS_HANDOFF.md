@@ -1,94 +1,54 @@
 # Pitcher Props Handoff
 
-Status checkpoint: 2026-08-17 (infrastructure note updated 2026-09-11)
+Status checkpoint: 2026-09-24
 
-This is the canonical handoff for the pitcher-strikeout side of the shared MLB repository. Read it before changing pitcher projection, scoring, confidence, tiers, output, history, backtests, or Windows scheduling. Hot Hits remains in the same checkout but has its own handoff in `docs/HOT_HITS_HANDOFF.md`.
+This is the technical/model handoff for pitcher strikeouts. For current project
+status and next actions, start with `docs/NEXT_CHECKIN.md`; for production
+operations, use `docs/AZURE_VM_OPERATIONS.md`. Hot Hits has a separate handoff
+in `docs/HOT_HITS_HANDOFF.md`.
 
-## Infrastructure Note (2026-09-11)
+## Current operational status (2026-09-24)
 
-Daily MLB collection moved from the Windows desktop to the Azure VM (`ssh azure`).
-The forecast board and grading run on the VM via systemd timers. Windows-specific
-sections below are historical; the Windows machine is retired. See
-`docs/AZURE_VM_OPERATIONS.md` for current infrastructure.
+- Azure VM (`ssh azure`) runs collection, board publication, and daily grading
+  with systemd timers. Windows is retired; all Windows paths and task commands
+  in older notes are archival and must not be executed.
+- Code/doc changes are made and tested on the Mac, committed/pushed, then pulled
+  onto Azure with `git pull --ff-only`. Grading runs on Azure, not the Mac.
+- The latest graded-board learning review records full pitcher boxscore lines,
+  team situation, exact source-input joins, and noon/afternoon market movement.
+  See `docs/NEXT_CHECKIN.md` for the current sample and remaining regular-season
+  review plan.
+- Active pitcher versions are defined in `mlb_props/version.py` (history schema
+  8, `pitcher-k-hybrid-v2`, `core-lean-watch-v2`, and their versioned shadows).
+- Do not change production selection, tiers, or model formulas from the short
+  Sep 10–22 analysis alone. The current objective is continued full-board
+  collection and learning; no family or play filters have been adopted.
 
 ## Purpose
 
-The pitcher system is a local-first MLB prop research and daily Discord pipeline focused primarily on pitcher strikeouts. Its practical job is to turn FanDuel strikeout lines, pitcher skill, projected workload, matchup context, and risk into a readable board.
+The pitcher system is an MLB prop research pipeline focused primarily on
+pitcher strikeouts. Its practical job is to turn FanDuel strikeout lines,
+pitcher skill, projected workload, matchup context, and risk into a readable
+board. Production collection and publication run on Azure; the Mac is used for
+code, analysis, and review.
 
 The project is trying to become useful every day without pretending every slate has a high-confidence wager. Core, Lean, and Watchlist are separate recommendation tiers. Core stays strict; Lean and Watchlist stay broad enough to surface the best available opinions and collect learning data.
 
 The long-term goal is a Discord board that another group could depend on. That requires honest uncertainty, calibrated probabilities, repeatable production collection, and evidence from saved pregame history. It does not justify padding Core or claiming profitable edge without sportsbook prices and calibration.
 
-## Current Production State
+## Historical Windows checkpoint
 
-Production commit: `8b23aab Collect pitcher recency projection shadow`
-
-Deployed versions (production, as of 2026-08-31):
-
-- history schema: `8`
-- active projection model: `pitcher-k-hybrid-v2`
-- tier policy: `core-lean-watch-v2`
-- opportunity shadow: `opportunity-shadow-v1`
-- recency shadow: `recency-shadow-v1`
-- confidence model: `pitcher-confidence-calibrated-v2`
-- daily card policy: `daily-unders-card-v1`
-- display policy: `provisional-confidence-rank-v1`
-
-2026-08-31 changes, each a separate versioned commit: the recency-shadow
-aggregate K/BF blend is now the production K-rate (`pitcher-k-hybrid-v2`); Core
-requires the UNDER side with a 1.5 edge cap and a 0.55 no-vig market-probability
-requirement when prices exist (`core-lean-watch-v2`); confidence applies a
-0.55 calibration shrink capped at 57% (`pitcher-confidence-calibrated-v2`);
-and the Daily Unders Card was pre-registered as a separate daily-volume policy
-(`daily-unders-card-v1`, schema 8).
-
-### Local branch schema-7 research candidate (not yet deployed to Windows)
-
-The `codex/pitcher-recency-shadow` local branch contains a schema-7 research candidate that is NOT yet on the Windows production checkout. Review and deploy it separately, then update this table.
-
-- history schema: `7` (audit identity, delivery ledger, sanitized settings)
-- forecast board: `forecast-board-v1` (research-only)
-- price shadow: `price-shadow-v1` (research-only)
-
-Windows production checkout:
-
-```text
-C:\Users\muski\mlb_props
-```
-
-Scheduled task:
-
-```text
-Task name: MLB Pitcher Plays
-Schedule: daily at 11:35 AM America/Detroit
-Action: C:\Windows\System32\cmd.exe /c ""C:\Users\muski\mlb_props\scripts\run_pitcher_props_task.cmd""
-Working directory: C:\Users\muski\mlb_props
-```
-
-The CMD wrapper passes `-ExportHistory` and `scheduled full pregame run` to the PowerShell wrapper. No scheduled-task definition change is needed for schema 6.
-
-Verified on 2026-08-17:
-
-- Windows `main` matched `origin/main` at `8b23aab`
-- task state was `Ready`
-- task result was `0`
-- Python was `3.13.14`
-- Discord reported `sent`
-- history exported to `pitcher_props_20260817T153547Z.json`
-- latest slate had 17 FanDuel strikeout lines, 11 qualified candidates, no Core, one Lean, and three displayed Watch plays
-
-Expected untracked Windows items are `New Text Document.txt`, `logs/`, and `run_hot_hits_task.ps1`. Do not delete them as cleanup without confirming ownership.
-
-The Mac checkout was left on `codex/pitcher-recency-shadow`, with `main`, `origin/main`, and that branch all at `8b23aab` before this documentation update. Two older local edits were intentionally preserved and were not part of the pitcher deployment:
-
-- `.gitignore`: ignores transferred Windows history folders
-- `mlb_props/tiers.py`: adds a source-of-truth comment only
-
-Always run `git status -sb` before staging. Stage named files; do not use `git add .` in this shared pitcher/Hot Hits checkout.
+The former Windows Task Scheduler configuration, August 2026 deployment state,
+branch names, and machine-specific paths have been removed from the active
+handoff. Any remaining Windows references in the technical notes below describe
+historical data/implementation context only. Current checkout, VM, timers, and
+unrelated working-tree state are recorded in `docs/NEXT_CHECKIN.md`; verify them
+with `git status -sb` and `ssh azure` before continuing.
 
 ## Runtime And Data Flow
 
-The daily pitcher path is:
+The production path is orchestrated by `run_forecast_pipeline.py` on Azure. Its
+collection components are:
 
 1. `run_nightly.py` loads settings and the MLB slate.
 2. MLB Stats API supplies games, probable pitcher IDs, pitcher logs, and projected-lineup context.
@@ -98,8 +58,12 @@ The daily pitcher path is:
 6. `mlb_props/tiers.py` determines Core eligibility and is the tier-policy source of truth.
 7. `mlb_props/pitcher_presentation.py` ranks already-eligible plays and marks `Best Available` when Core is empty.
 8. `mlb_props/output.py` renders detailed terminal output and compact Discord cards.
-9. `run_nightly.py` sends Discord and exports a versioned JSON history snapshot.
-10. `backtest.py` resolves saved strikeout predictions against final MLB game logs.
+9. The pipeline collects pitcher props and game markets, then builds and
+   publishes the board from those exact exports. `run_nightly.py` remains a
+   collection component/manual CLI; the forecast board is the scheduled publisher.
+10. `grade_forecast_board.py` runs on Azure after games finish, grades canonical
+    plays, and writes a daily learning review. `backtest.py` remains available
+    for pitcher-tier and historical research.
 
 Important files:
 
@@ -127,22 +91,26 @@ Important files:
 
 ## Active Projection And L5 Influence
 
-The active model is situational, but L5 enters more than once.
+The active projection version is `pitcher-k-hybrid-v2` (history schema 8),
+not the pre-August formula described in older analysis.
 
 Active K rate:
 
-- averages each start's K/BF rate
-- uses `60% L5 + 40% season`
-- adds opponent handedness K-rate context
-- adjusts for opponent patience and recent pitcher walk risk
+- uses aggregate K/BF weighted `50% season + 30% L10 + 20% L5`
+- applies opponent handedness K-rate context and the model's existing
+  situational adjustments
+- applies the existing walk-risk adjustment
 
 Active opportunity:
 
-- projected outs begin with `60% L5 outs + 40% season outs`
+- projected outs retain the situational opportunity projection, informed by
+  recent workload and season baseline
 - recent pitch count, outs stability, quality starts, short starts, walks, earned runs, opponent outs factor, and moneyline adjust the result
 - active projected batters faced uses L5 batters-faced-per-out
 
-L5 also enters line deltas, recent hit-rate adjustments, workload stability, volatility flags, control risk, and several score bonuses/penalties. This creates more total recency influence than the visible K-rate formula alone suggests.
+Other recommendation and presentation components also consume recent-form
+features. Consult the implementation and tests before inferring that a single
+feature's weight is equivalent to its total influence.
 
 The working lesson is not “remove L5.” Separate it by meaning:
 
@@ -150,7 +118,11 @@ The working lesson is not “remove L5.” Separate it by meaning:
 - recent K/BF and walk rate are skill evidence and deserve moderate weight
 - recent pitch count, outs, BF, role, leash, and short starts are opportunity evidence and deserve strong weight
 
-Do not change the active formula until the schema-6 shadow is graded.
+The schema-6 shadow was graded and informed the Aug 31 hybrid activation. That
+activation is historical; it is not a current to-do. The Sep 10–22 forecast-board
+study found pitcher-K conversion errors, but that board model/population is not
+the same as the saved Core/Lean/Watch tier backtest. See `docs/NEXT_CHECKIN.md`
+before drawing conclusions or proposing a formula change.
 
 ## Recommendation And Presentation Semantics
 
@@ -216,15 +188,15 @@ Each qualified candidate saves the shadow projected K rate, Ks, outs, BF, side e
 
 Backtests can compare active versus shadow K/BF bias and MAE, confidence Brier score, and performance across L5 hit bands (`0-1/5`, `2/5`, `3/5`, `4-5/5`). The comparison only covers candidates admitted by the active model; it cannot prove how excluded lines would have performed.
 
-## Saved Learning Data
+## Saved Learning Data (current schema 8)
 
-Schema-6 history is written under:
+Pitcher history is written by the Azure collection pipeline under:
 
 ```text
 outputs/history/pitcher_props_*.json
 ```
 
-Each export preserves:
+Schema-8 exports preserve:
 
 - model, schema, tier, confidence, display, opportunity-shadow, and recency-shadow versions
 - screen date, export time, settings, run note, and line coverage diagnostics
@@ -237,30 +209,14 @@ Each export preserves:
 - display rankings and exact recommendation/display roles
 - line-independent starter board/model opinions
 
-### Schema-7 additions (local branch research candidate)
+The forecast-board grader separately grades all canonical board families on
+Azure. It enriches each graded row from the exact board-recorded source exports,
+captures actual pitcher boxscore lines, and writes daily learning-review JSON
+and Markdown. See `docs/AZURE_VM_OPERATIONS.md` for the artifacts and pull
+workflow. Old schema-6/7 collection counts below prior handoff versions are
+historical and must not be treated as the current grading state.
 
-When schema 7 is deployed, each export additionally preserves:
-
-- sanitized settings with `odds_api_key` removed
-- a `slate_games` array (game id, game time UTC, teams, probable pitchers and IDs) for strict pregame checks
-- a `discord_delivery` ledger (enabled/attempted/sent time/ok/status/error/embed titles/field titles)
-- per-candidate audit identity: `event_id`, `line_source`, and `line_collected_at` (tied to the PropLine)
-- a `forecast_rows` board capturing every evaluated line, including non-qualifying ones and their qualification reason
-- per-candidate `price_shadow` when the line source exposes both-side prices (`over_price`, `under_price`, implied and no-vig probabilities)
-
-The local grader (`mlb_props/pitcher_grading.py`) consumes schema-7 identity for strict grading: it only grades rows whose snapshot was strictly pregame and (optionally) delivered, resolves doubleheaders exactly via `event_id`, and reports price-shadow support.
-
-As of 2026-08-17, Windows had:
-
-- 12 schema-6 scheduled snapshots
-- screen dates from August 5 through August 17
-- no August 16 snapshot because all morning outbound HTTPS requests timed out
-- 195 qualified candidate profiles
-- 195/195 populated recency-shadow profiles
-
-This is enough collected volume to begin the first recency-shadow review, but it is not yet resolved evidence. The newest saved Windows backtest was still `backtest_2026-07-01_to_2026-08-02_all_history.txt`; schema-6 history has not been graded.
-
-## Lessons From The Recent Development Sequence
+## Historical Modeling Notes (August 2026)
 
 1. Pitcher Ks are too volatile for an NBA-style `4/5` consistency model. Recent prop results should not dominate situational projection.
 2. Opportunity matters disproportionately. Short outings, deeper-than-expected outings, traffic, pitch count, and leash can overwhelm K-rate skill.
@@ -272,7 +228,7 @@ This is enough collected volume to begin the first recency-shadow review, but it
 8. Late or in-progress runs can have thin sportsbook coverage. On August 16 at approximately 4:28 PM, a diagnostic run found only four FanDuel K lines on a 15-game slate. That was a timing/source-coverage issue, not model failure.
 9. Shared pitcher and Hot Hits code in one repository is intentional. Branch/worktree discipline is the solution; splitting the repository is not currently needed.
 
-## August 16 Connectivity Incident
+## Archived August 16 Connectivity Incident
 
 On the morning of 2026-08-16, multiple independent Windows jobs failed across different domains:
 
@@ -313,30 +269,26 @@ The Daily Card is the daily-volume product: a separate pre-registered policy, no
 - Pre-registered success rule: trust at >= 55% with n >= 100 graded plays; marginal at 52.4-55% (requires price-based EV check); kill below 52.4%. Changing the gates requires a new policy version and a separate commit.
 - Do not pad the card. Zero-pick days are valid outcomes and are reported honestly.
 
-## Next Logical Task
+## Next Work
 
-The schema-6 grading task that used to live here is complete; its findings produced the 2026-08-31 activation commit set (hybrid K projection, Core gate rebuild, confidence recalibration). Do not stack further scoring changes on top until the new gates have their own graded sample.
-
-The next tasks are prospective, not retrospective:
-
-1. Verify the new pipeline on 3-5 completed slates: price-shadow coverage on every eligible candidate, `model_version` / `tier_policy_version` / `confidence_model_version` / `daily_card_policy_version` correct in exports, Core appearing only for market-backed unders, and the Daily Card populated with small-edge unders.
-2. Grade the Daily Card daily via the morning backtest and weekly via `pitcher_grading.daily_card_summary`; apply the pre-registered success rule at season end.
-3. Grade the new Core gates and calibrated confidence bands once roughly 50-100 new candidates resolve. If the `0.55` no-vig Core threshold proves too tight or too loose against accumulated prices, change it as a separate `core-lean-watch-v3` commit.
-4. Add the no-vig market-support gate as `daily-unders-card-v2` once roughly two weeks of priced rows exist; evaluate whether it improves the card before adopting.
-5. Extend `.analysis/first_hunt_under_ks.py` into a repeatable weekly grader (one command, combined rows, price-shadow EV versus no-vig baseline, saved to `.analysis/`).
-6. Build the game-markets line-movement report (morning versus evening snapshots, starter-change detection) once two full weeks of collection exist.
-
-Keep the discipline that worked so far: pregame snapshots only, abnormal slates excluded from conclusions, and every production change as its own versioned commit.
+The schema-6 shadow review and Aug 31 activation are complete. The current
+project work is the full-board learning plan in `docs/NEXT_CHECKIN.md`: continue
+collecting the full board through the regular season, pull daily grade/review
+artifacts from Azure to the Mac, assess repeatability at the season-end review,
+and keep playoff data separate. No family or individual-play filter has been
+adopted from the short Sep 10–22 sample.
 
 ## Pickup Checklist
 
-1. Read `README.md` fully, especially pitcher objective/design, scheduling, current scoring inputs, assumptions, and handoff notes.
-2. Read this file and `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md`.
-3. Run `git status -sb` and preserve unrelated edits.
-4. Inspect the active versions in `mlb_props/version.py`.
-5. Review `run_nightly.py`, `backtest.py`, screener, tiers, confidence, presentation, both shadows, output, sources, and task wrappers.
-6. Inspect Windows production directly with `ssh windows`.
-7. Confirm task result, latest history, coverage diagnostics, and deployed commit before interpreting an empty board.
-8. Grade the current window's history before proposing any new pitcher formula; the schema-6 grade lives in `.analysis/schema6/pitcher_schema6_report.md` and the unders analysis in `.analysis/first_hunt/`.
-9. Run `PYTHONPYCACHEPREFIX=.pycache python3 -m unittest discover -s tests` and compilation checks before committing.
-10. Stage named files and inspect `git diff --cached`; never discard local transfer-ignore or tier-comment edits.
+1. Read `docs/NEXT_CHECKIN.md` and `docs/AZURE_VM_OPERATIONS.md` for current
+   status and operations; read this file for pitcher model design.
+2. Run `git status -sb` and preserve every unrelated edit.
+3. Inspect active versions in `mlb_props/version.py` and recent commits.
+4. Verify Azure timers, board/grade artifacts, and task logs before interpreting
+   missing coverage or an empty slate.
+5. Use the daily learning-review artifacts and point-in-time exports for
+   analysis. Keep regular-season and playoff samples separate.
+6. Do not tune production gates or remove families from the short initial
+   sample; pre-register and validate any future aspect-level hypothesis.
+7. Run the full test suite and compilation checks before committing. Stage only
+   named files; never discard unrelated work or use `git add .`.

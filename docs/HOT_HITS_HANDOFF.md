@@ -1,6 +1,13 @@
 # Hot Hits Handoff
 
-Status checkpoint: 2026-08-21
+Technical/history checkpoint: 2026-08-21; current operations verified 2026-09-24.
+
+> **Current-source note:** `docs/NEXT_CHECKIN.md` and `docs/AZURE_VM_OPERATIONS.md`
+> are authoritative for the shared repo's current status and deployment. Hot Hits
+> is not scheduled on Windows or by an Azure timer; it remains a manual VM task.
+> Windows task definitions, paths, and retention observations below are archival
+> only. Verify current Hot Hits exports/logs on Azure before relying on old sample
+> availability claims.
 
 ## Infrastructure Note (2026-09-11)
 
@@ -22,7 +29,7 @@ Pitcher files and concepts that are explicitly out of scope include:
 
 Some files such as `README.md`, `mlb_props/models.py`, `mlb_props/config.py`, and `mlb_props/output.py` are shared. If a future Hot Hits change truly requires one of them, edit and stage only the hitter-specific lines. Never use `git add .` in this shared checkout.
 
-Current local repository checkpoint:
+### Archived local repository checkpoint (2026-08-21; superseded)
 
 - current commit and `origin/main`: `0ff3562`
 - Hot Hits production/confidence implementation has not changed since commits `7986175` and `4f7d60e`
@@ -36,7 +43,7 @@ The practical objective is to maximize the chance that every recommended leg rec
 
 Keep terminal output broad and detailed for research. Keep Discord compact and actionable.
 
-## Current Production Status
+## Archived Production Policy Checkpoint (2026-08-21; verify before applying)
 
 Commit `5ce5114` promoted the Core-first Hot Hits work to `main`.
 
@@ -51,11 +58,20 @@ Production Discord uses policy `core-first-v1`:
 - never show Thin candidates on Discord
 - do not include Value in the recommended Core parlay
 
-The former six-name policy remains available as `current-v1` for historical comparison or temporary rollback. The scoring model and eligibility gates were not changed during the Core-first rollout; the production change was card construction and presentation.
+The former six-name policy was retained as `current-v1` for historical
+comparison or temporary rollback. The scoring model and eligibility gates were
+not changed during the Core-first rollout; the production change was card
+construction and presentation.
 
-`contact-quality-shadow-v1` and `hot-hits-confidence-provisional-v1` are the current observation layers. They are deliberately non-production: Baseball Savant xBA, expected at-bat opportunity, and the provisional one-hit estimate are collected for study without changing the production card.
+At the 2026-08-21 checkpoint, `contact-quality-shadow-v1` and
+`hot-hits-confidence-provisional-v1` were observation-only layers. Verify the
+current implementation before treating these historical policy details as a
+current state claim.
 
-As of 2026-08-21, do not change the production screen, score, Core/Value/Thin rules, or Discord card based only on the confidence percentages. The new pool has accumulated substantial operational volume, but its outcome history is not currently available for calibration.
+At the 2026-08-21 checkpoint, the recommendation was not to change the
+production screen, score, Core/Value/Thin rules, or Discord card based only on
+the confidence percentages. This is a historical decision record; check the
+current research sample before continuing that evaluation.
 
 ## Current Data Flow
 
@@ -265,7 +281,7 @@ Parlay grading is void-adjusted:
 
 DNPs matter operationally, but they should not be over-penalized because they may void in a real betting workflow.
 
-## Windows Production Configuration
+## Archived Windows Production Configuration (retired)
 
 Production path:
 
@@ -273,7 +289,10 @@ Production path:
 C:\Users\muski\mlb_props
 ```
 
-The existing Task Scheduler task and wrappers remain valid. No task recreation, schedule change, argument change, wrapper edit, or new Windows environment variable is required for Core-first or confidence research. The broader-pool thresholds have code defaults and are exposed as optional `HOT_HITS_RESEARCH_*` overrides only for controlled experiments.
+At the time of this Windows rollout, the existing task and wrappers were
+considered valid without a schedule change. Windows is retired; this archived
+configuration is not a current deployment recipe. Hot Hits is now an
+unscheduled manual Azure task.
 
 Production user environment:
 
@@ -283,7 +302,8 @@ HOT_HITS_CORE_LIMIT=4
 HOT_HITS_VALUE_LIMIT=2
 ```
 
-These values were saved with `setx` for the `muski` account. Scheduled tasks must run under that same Windows account to inherit them. `DisplayLimit` continues to control the detailed terminal/log board, not the Core-first Discord limits.
+These values were saved with `setx` for the `muski` Windows account at that
+historical checkpoint. They do not configure the current Azure runner.
 
 Task logs:
 
@@ -305,7 +325,7 @@ Expected successful-run evidence:
 - History export: ...
 ```
 
-### Windows state verified on 2026-08-21
+### Archived Windows state verified on 2026-08-21 (not current production)
 
 - repository: `C:\Users\muski\mlb_props`, `main` at `0ff3562`
 - task: `MLB_hot_hits`
@@ -375,29 +395,35 @@ This is now the primary blocker. Fixing or proving durable history retention com
 - xBA is an expected batting-average signal, not certainty; the conversion assumes similar per-at-bat opportunity and does not model each starter/bullpen plate appearance independently.
 - The broader research pool still has minimum season, recent-average, sample, and batting-order boundaries. It is broader than production, not a census of every active hitter.
 
-## Collection Plan And Next Review
+## Current Collection Plan And Next Review
 
 Keep the current scoring, production gates, confidence formula, and Core-first settings unchanged.
 
-The next agent should proceed in this order:
+Hot Hits remains unscheduled. Do not run it automatically or inspect the retired
+Windows Task Scheduler. When a Hot Hits task is explicitly requested, use the
+Azure runner (`scripts/run_linux_task.sh hot-hits`) and verify the resulting
+export on Azure. For the shared forecast-board/regular-season plan, follow
+`docs/NEXT_CHECKIN.md`.
 
-1. Use `ssh windows` to inspect the next `MLB_hot_hits` run. Confirm task result, Discord status, and the exact history-export path.
-2. Immediately verify that the reported JSON file exists, can be parsed, contains `confidence_research_pool`, and remains present after any repository pull or maintenance workflow.
-3. Investigate the missing August 5–20 history non-destructively. Check backups, cloud-sync locations, Recycle Bin metadata, deployment scripts, and maintenance commands. Do not restore over current files, delete anything, or alter scheduled tasks without user confirmation.
-4. If recovery is impossible, establish a durable backup or copy-after-run process for future Hot Hits JSON. Any scheduled-task definition or system-setting change requires user confirmation.
-5. Accumulate a new retained sample. The prior run logs prove volume and coverage, but they cannot substitute for candidate-level JSON when grading outcomes.
-6. Once at least 50–100 resolved retained research profiles exist, run `hot_hits_report.py` against the focused window. Grade exact deliveries separately with `--card-policy delivered`.
-7. Compare confidence forecast versus observed hit rate and Brier score by label; current-gate pass versus fail; top-one through top-four shadow cards; and the exact reasons high-confidence hitters were excluded.
-8. Track DNPs separately and void-adjust parlays. Do not count DNP as an ordinary miss.
-9. Exclude All-Star, tiny, source-failed, late, and otherwise abnormal slates from model-tuning conclusions.
-10. If evidence supports a production change, propose one isolated L5 gate or scoring adjustment and simulate it in `hot_hits_report.py` before editing production logic. Do not combine a gate change with card-policy or confidence-formula changes.
+For a requested Hot Hits review, proceed in this order:
 
-The next logical task is history-retention recovery and validation, not odds integration and not production scoring changes.
+1. Confirm task result, delivery status, and the exact history-export path on Azure.
+2. Verify the exported JSON exists, parses, and contains the expected research pool.
+3. Grade a retained sample with `hot_hits_report.py`; exact deliveries and broader
+   research profiles are separate populations.
+4. Compare forecast confidence with observed hit rate and Brier score; track DNPs
+   as voids, not misses.
+5. Treat small or abnormal slates as descriptive only. Propose any selection or
+   scoring change separately and validate it out of sample before deployment.
 
-## Ready-To-Use Continuation Prompt
+The prior Windows history-retention investigation is complete as a historical
+task; do not assume missing August exports remain the current blocker. Verify the
+available Azure history before planning any new Hot Hits study.
+
+## Ready-To-Use Continuation Prompt (current workflow)
 
 ```text
-You are taking over only the Hot Hits hitter portion of /Users/colemason/mlb_props. Do not touch the pitcher-props structure, logic, documentation, tasks, tests, or uncommitted pitcher work.
+You are taking over only the Hot Hits hitter portion of /Users/colemason/mlb_props. The shared repo's current status is in docs/NEXT_CHECKIN.md; Azure operations are in docs/AZURE_VM_OPERATIONS.md. Do not touch pitcher scoring or selection unless the task requires shared infrastructure and you explain the scope.
 
 Before changing anything:
 
@@ -406,7 +432,7 @@ Before changing anything:
 3. Read docs/HOT_HITS_HANDOFF.md completely; treat it as the canonical hitter handoff.
 4. Run git status --short --branch and preserve all unrelated edits. Never use git add . in this shared repository.
 5. Review run_hot_hits.py, hot_hits_report.py, mlb_props/hot_hits.py, mlb_props/hot_hits_policy.py, mlb_props/hot_hits_confidence.py, mlb_props/output.py, mlb_props/config.py, mlb_props/sources/baseball_savant.py, scripts/run_hot_hits_task.ps1, scripts/run_hot_hits_task.cmd, and the Hot Hits tests.
-6. Use ssh windows for production inspection. The Windows repo is C:\Users\muski\mlb_props and the task is MLB_hot_hits. Do not copy logs locally unless necessary.
+6. Use `ssh azure` for production inspection. Hot Hits is a manual task on Azure (`scripts/run_linux_task.sh hot-hits`), not a Windows task or a systemd timer. Do not run it unless the requested task calls for a run.
 
 Project invariants:
 
@@ -418,18 +444,18 @@ Project invariants:
 - DNPs are tracked separately and treated as voids in parlay grading, not ordinary misses.
 - Do not tune from tiny, abnormal, source-failed, or short samples.
 
-Current state as of 2026-08-21:
+Historical state as of 2026-08-21 (not the current data-availability claim):
 
 - origin/main is 0ff3562; Hot Hits confidence was deployed in 7986175 and documented in 4f7d60e.
 - The August 5–20 logs show 15 successful runs out of 16, Discord sent on every successful run, 170 production candidates, 1,649 research profiles, and 1,649/1,649 Savant coverage.
 - The broader pool worked operationally, but no predictive conclusion has been established.
 - Critical blocker: C:\Users\muski\mlb_props\outputs\history is missing even though the logs recorded successful export paths. Without candidate-level JSON, the confidence and L5 gate questions cannot be graded.
 - The August 16 task failed, but the retained log contains only the first Traceback line, so its cause is unknown.
-- The Windows task definition and core-first environment values were healthy at last inspection. Do not alter the task definition without asking.
+- The Windows task definition and Core-first environment values were healthy at that historical inspection. Windows is retired; these facts do not describe current production.
 
 Your first task:
 
-Investigate Hot Hits history retention non-destructively. Verify the next scheduled export exists and persists, look for recoverable copies of the missing August confidence exports, and determine whether any maintenance/deployment workflow removed outputs. Report evidence before proposing changes. If retention is restored and at least 50–100 resolved profiles are available, grade the focused sample with hot_hits_report.py and evaluate confidence calibration plus current-L5-gate exclusions. Do not modify production scoring, Discord policy, confidence weights, label boundaries, or any pitcher code until you have shown the evidence and received direction.
+First inspect current Azure task logs and retained exports, then report availability and sample size. If a Hot Hits study is requested and enough resolved rows exist, grade with hot_hits_report.py and evaluate confidence calibration and current-gate exclusions. Do not modify production scoring, Discord policy, confidence weights, label boundaries, or pitcher code without an explicit evidence-backed scope.
 ```
 
 ## Validation Checkpoints

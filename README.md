@@ -1,5 +1,12 @@
 # MLB Nightly Props Screener
 
+> **Current operating state (2026-09-24):** Read [`docs/NEXT_CHECKIN.md`](docs/NEXT_CHECKIN.md)
+> for current project status and next steps, and [`docs/AZURE_VM_OPERATIONS.md`](docs/AZURE_VM_OPERATIONS.md)
+> for deployment/timers. Mac is the edit/test/commit/analysis machine; Azure is
+> the production collector, board publisher, and grader. Windows is retired.
+> Windows Task Scheduler instructions and dated status checkpoints later in this
+> README are historical reference only, not current operational directions.
+
 Pitcher-first MLB props screener modeled on the NBA project's repeatable flow:
 
 - slate
@@ -38,14 +45,14 @@ And a game-level market shadow collector (observation-only, no model opinions):
 - `mlb_props/version.py`: pitcher history, active-model, tier-policy, shadow-feature, and display-policy versions
 - `mlb_props/output.py`: terminal rendering
 - `backtest.py`: reconciles saved pitcher strikeout snapshots against actual MLB results
-- `scripts/run_pitcher_props_task.*`: Windows Task Scheduler wrappers for the daily pitcher board
-- `scripts/run_pitcher_props_backtest_task.*`: optional Windows Task Scheduler wrappers for daily pitcher backtests
+- `scripts/run_pitcher_props_task.*`: legacy Windows Task Scheduler wrappers (retired)
+- `scripts/run_pitcher_props_backtest_task.*`: legacy Windows backtest wrappers (retired)
 - `run_game_markets.py`: game-market shadow collector CLI (Bovada primary, Action/FanDuel cross-check and fallback)
 - `mlb_props/game_markets.py`: two-way price models and no-vig market-baseline math
-- `scripts/run_game_markets_task.*`: Windows Task Scheduler wrappers for the morning + evening shadow runs
+- `scripts/run_game_markets_task.*`: legacy Windows Task Scheduler wrappers (retired)
 - `run_forecast_board.py`: forecast-first board builder (dry-run by default)
-- `run_forecast_pipeline.py`: atomic pitcher/market collection then board publication (production entry point)
-- `grade_forecast_board.py`: daily grader that settles ROI ledger and posts Discord recap
+- `run_forecast_pipeline.py`: atomic pitcher/market collection then board publication (Azure production entry point)
+- `grade_forecast_board.py`: Azure daily grader that settles ROI ledger and writes the learning review
 - `mlb_props/calibration.py`: shared isotonic/logit/EV/count-distribution math (stdlib only)
 - `mlb_props/forecasting/`: fitted forecast engines (`pitcher_k`, `batter_hit`, `game_runs`, shared `game_data`)
 - `scripts/fit_pitcher_engine.py`, `scripts/fit_batter_engine.py`, `scripts/fit_game_engine.py`: engine fits with inner-split calibration and rolling OOF evaluation
@@ -54,7 +61,7 @@ And a game-level market shadow collector (observation-only, no model opinions):
 
 ## Forecast board (added 2026-09-11)
 
-`run_forecast_pipeline.py` is the production entry point: it collects fresh
+`run_forecast_pipeline.py` is the Azure production entry point: it collects fresh
 pitcher props and game markets, then builds and publishes the board from exactly
 those new exports (so inputs are never stale). Two daily revisions run on the
 VM — noon at 12:15 ET and afternoon at 16:45 ET:
@@ -96,12 +103,16 @@ python3 run_forecast_board.py --date 2026-09-08 --slot noon --as-of 2026-09-08T1
   sends are recorded in `outputs/ledger/discord_delivery.jsonl`; a date/slot
   will not repost without `--force-send`.
 
-### Daily grading (added 2026-09-11)
+### Daily grading (runs on Azure)
 
-`grade_forecast_board.py` grades a completed screen date against the free MLB
+`grade_forecast_board.py` runs on Azure and grades a completed screen date against the free MLB
 Stats API, writes `outputs/grades/forecast_board_<date>.json`, settles priced
 `PENDING` rows in `outputs/ledger/picks_roi.jsonl`, and posts a short recap to
 the board channel. It runs on the VM at 6:00 AM ET for the prior day.
+Alongside the grade JSON it writes `learning_review_<date>.json` and `.md`
+with actual pitcher boxscore lines, team situation, exact-input join/price
+audits, and noon-to-afternoon movement (not CLV). See
+`docs/AZURE_VM_OPERATIONS.md`.
 
 ```bash
 python3 grade_forecast_board.py --date 2026-09-08
@@ -141,8 +152,7 @@ shadow models can be graded against a real market baseline from day one.
 - Run locally: `DATA_MODE=live python3 run_game_markets.py`
   (add `EXPORT_HISTORY=true` to export).
 
-Windows Task Scheduler registration (morning pregame + evening
-lineup-confirmation refresh):
+Archived Windows Task Scheduler registration (retired; do not use):
 
 ```bat
 schtasks /Create /TN "MLB_game_markets" /TR "C:\Users\muski\mlb_props\scripts\run_game_markets_task.cmd" /SC DAILY /ST 11:40 /F
@@ -217,7 +227,8 @@ DATA_MODE=live SEND_DISCORD=true DISCORD_WEBHOOK_URL=your_discord_webhook_url py
 
 The pitcher board is a daily research tool for posted pitcher strikeout props. The current objective is not to maximize the number of picks; it is to keep a strict Core board while still saving broader model opinions for learning. The intended workflow is:
 
-- run one full pregame slate capture each day from the Windows PC
+- collect and publish the full remaining slate through the Azure noon/afternoon
+  systemd pipelines (current schedule: `docs/AZURE_VM_OPERATIONS.md`)
 - use FanDuel as the primary no-key strikeout line source
 - combine pitcher projection, expected outs/batters-faced opportunity, handedness matchup, recent K rate, walk risk, and workload context
 - show Core plays separately from Leans and Watchlist so the daily output stays useful even when few Core plays qualify
@@ -332,7 +343,7 @@ Safeguards:
 - shadow warnings are stored separately from production scoring flags
 - older schema-1 and schema-2 history remains backtestable
 
-The sample board was byte-for-byte identical before and after the original shadow implementation. The existing Windows task still runs unchanged. Review after 3-5 completed slates for obvious data-quality issues, but do not let display-only reliability labels influence score or tier from that early sample. Target at least 50-100 graded candidates before deciding whether any shadow estimate or warning should influence production recommendations.
+At the original shadow implementation checkpoint, the sample board was byte-for-byte identical before and after the change. Review after 3-5 completed slates for obvious data-quality issues, but do not let display-only reliability labels influence score or tier from that early sample. Target at least 50-100 graded candidates before deciding whether any shadow estimate or warning should influence production recommendations. Production now runs via Azure systemd; the old Windows task reference is retired.
 
 #### Pitcher presentation checkpoint: 2026-08-02
 
@@ -499,7 +510,8 @@ export PITCHER_PROPS_DISCORD_WATCH_LIMIT=5
 export RUN_NOTE="scheduled full pregame run"
 ```
 
-On Windows, store the webhook once for the same user account that will run the scheduled task:
+Archived Windows webhook/task setup (retired; current secrets live in the Azure
+VM environment file described in `docs/AZURE_VM_OPERATIONS.md`):
 
 ```powershell
 setx DISCORD_WEBHOOK_URL "your_discord_webhook_url"
@@ -590,9 +602,11 @@ For `core-first-v1` and `current-v1`, the report recomputes hot-hit scores using
 
 Exports containing `confidence_research_pool` are graded across that broader pool. The report still limits policy replays to profiles that were production-qualified, so research-only names cannot leak into a simulated Discord card. It also reports observed hit rate, mean forecast and Brier score by confidence label; current-gate pass/fail; confidence-ranked one- through four-leg shadow cards; and hits excluded by the current gate. Older exports without the new pool continue to grade their original `candidates` array.
 
-For Windows-to-Mac review, either zip logs/history on Windows or pull raw files with `scp`. History JSON files are the grading source of truth; task logs are mainly for debugging scheduled-run failures. Local pull folders such as `hot_hits_from_windows/` and `pitcher_props_from_windows/` are ignored by git.
+Historical Windows-to-Mac review procedure (retired): old exports were zipped
+or copied with `scp`. Current production grades run on Azure; pull current grade
+and learning-review artifacts using `docs/AZURE_VM_OPERATIONS.md`.
 
-### Windows Task Scheduler: Pitcher Props
+### Archived Windows Task Scheduler: Pitcher Props (retired)
 
 Use this for the once-per-day full pregame pitcher strikeout board. The wrapper runs live mode and exports history automatically.
 
@@ -663,7 +677,7 @@ $History |
   Select-Object history_schema_version, model_version, tier_policy_version, shadow_feature_version, recency_shadow_version, confidence_model_version, display_policy_version, run_note
 ```
 
-### Windows Task Scheduler: Daily Pitcher Props Backtest
+### Archived Windows Task Scheduler: Daily Pitcher Props Backtest (retired)
 
 Use this as a morning health-check task before the next slate is exported. It runs the latest-slate backtest and writes the report to `outputs\backtests`.
 
@@ -819,12 +833,12 @@ Do not add these shadow values to score or tier policy merely because they are p
 - If a live board comes back empty under the primary thresholds, the runner automatically retries with a softer live fallback profile so you still get a usable practice board.
 - The starter board is line-independent and is meant for daily assessment; its matchup columns are pitcher-friendly when positive and tougher when negative.
 - `EXPORT_HISTORY=true` writes backtest-ready screen snapshots to `outputs/history/`, and `python3 backtest.py` reconciles saved strikeout plays the next day.
-- Current schema-7 pitcher exports save `opportunity-shadow-v1` profiles, `recency-shadow-v1` alternative projections, `pitcher-confidence-calibrated-v2` estimates, and `provisional-confidence-rank-v1` display rankings. Since 2026-08-31 the active production model is `pitcher-k-hybrid-v2` and the tier policy is `core-lean-watch-v2`.
+- Current schema-8 pitcher exports save `opportunity-shadow-v1` profiles, `recency-shadow-v1` alternative projections, `pitcher-confidence-calibrated-v2` estimates, and `provisional-confidence-rank-v1` display rankings. Since 2026-08-31 the active production model is `pitcher-k-hybrid-v2` and the tier policy is `core-lean-watch-v2`.
 - History schema changes, projection-model changes, tier-policy changes, and shadow-feature changes are versioned separately. A schema bump does not by itself mean recommendations changed.
-- Confidence, display-policy, and recency-shadow changes are versioned separately. The schema-6 bump records additional research history; it does not change active projections, score calculations, or Core/Lean/Watch eligibility.
-- Shadow collection requires no Task Scheduler modification; pulling current `main` is sufficient.
+- Confidence, display-policy, and recency-shadow changes are versioned separately. The schema-8 history format records additional research context; it does not change active projections, score calculations, or Core/Lean/Watch eligibility.
+- Azure systemd timers run production. Deploy code from Mac to Azure by pushing the commit and fast-forward pulling `main`; do not use retired Windows Task Scheduler wrappers.
 - An early 3-5-slate shadow review is for data-quality checks only. Use a larger 50-100-candidate sample before considering production activation.
-- Only exported displayed buckets are graded by the normal backtest scopes. `model_opinions` and `starter_board` are saved for later research, but they are not the default backtest target.
+- The normal pitcher-tier backtest grades saved Core/Lean/Watch buckets. The separate forecast-board grader grades all canonical board plays. `model_opinions` and `starter_board` are research data, not the default pitcher-tier backtest target.
 - Late or in-progress slate runs can produce thin line coverage because books remove markets after games start. Do not tune the model from thin/source-failed runs.
 - All-Star break, no-game days, one-game slates, and other abnormal windows can produce empty or tiny pitcher samples. Treat those as operational diagnostics rather than model-quality evidence.
 - The graded August 5-30 sample showed the old Core gates were anti-selecting (Core 2-13), so Core was rebuilt on 2026-08-31 as UNDER-only with a `1.5` edge cap and a `0.55` no-vig market-probability requirement when prices exist. Watchlist should stay broad for data collection; grade the new Core gates daily before trusting them.
@@ -835,19 +849,23 @@ Do not add these shadow values to score or tier policy merely because they are p
 - Batter hits are wired as a live, line-independent hot-hitter board; posted sportsbook hit odds are not scraped yet.
 - Hot-hits DNPs should be tracked in grading, but they are not treated as a reason by themselves to over-tighten the model. In betting workflows these often void, and early-day betting can happen before final lineups.
 - Live Hot Hits Discord output is Core-first: Core names are the only recommended parlay legs, Value names are separate optional risks, and Thin names remain terminal/history research only.
-- Scheduled hot-hits runs depend on probable starters and recent lineup projections available at run time. A fixed 11:30 AM run can behave differently on noon-heavy slates than on evening-heavy slates.
+- Manual Hot Hits runs depend on probable starters and recent lineup projections available at run time. Hot Hits is currently unscheduled on Azure.
 - The All-Star break and other abnormal slate windows can produce empty or tiny hot-hits samples. Do not tune the model from those periods alone.
 - Recent model review found the broad hot-hits candidate pool was useful, but the old Discord top-eight card was too impressed by heat. The current tradeoff is a smaller Discord card that may miss some broader hits but should be easier to review.
 - Backtests showed top score alone does not reliably beat the full card. Useful support patterns have included top-half batting order, positive matchup rating, and starter hit-allowed context; pure `5/5` hit streaks and `.450+` last-5 average alone were not enough.
 - The production Hot Hits gate still requires at least four hit games in the last five and a `.350` last-5 average. A broader confidence research pool now exists specifically to measure whether that gate excludes stronger xBA and opportunity profiles; it does not loosen the live card.
 - Hot Hits confidence is a provisional estimate of recording at least one hit, not a conversion of the additive score. It is independent of sportsbook price and cannot be interpreted as expected value.
 - Baseball Savant season/last-10 xBA and expected at-bat opportunity drive the confidence shadow. Hit-game streak count is recorded as current-gate context but does not directly increase confidence.
-- Existing Hot Hits Task Scheduler definitions require no change for the broader pool or confidence shadow. The default settings are in code, and the existing wrapper will export the new nested history fields after deployment.
+- Hot Hits shadow fields remain observation-only. Run Hot Hits on Azure only as a manual task when explicitly requested; it is not a systemd timer or Windows scheduled task.
 - Known limitation: `hot_hits_report.py` fetches MLB boxscores over the network and can be slow if pointed at a large raw history folder. Prefer a focused `--since` window or a small copied directory when reviewing recent changes.
 
 ## Git workflow for the shared pitcher/hitter repo
 
-Pitchers and Hot Hits intentionally live in the same repository because they share MLB models, sources, output utilities, history infrastructure, Windows deployment, and tests. The repository does not need to be split. Isolate simultaneous work with branches or separate worktrees, and always confirm the active branch before committing.
+Pitchers and Hot Hits intentionally live in the same repository because they
+share MLB models, sources, output utilities, history infrastructure, and tests.
+Windows deployment is historical; production collection/grading currently runs
+on Azure. Isolate simultaneous work with branches or separate worktrees, and
+always confirm the active branch before committing.
 
 For the simplest sequential solo workflow:
 
@@ -886,41 +904,48 @@ Before switching branches, preserve or commit unrelated edits. Never discard `.g
 
 ## Handoff Notes
 
-Focused continuation documents:
+**Current source of truth:** `docs/NEXT_CHECKIN.md` for project status/next
+steps and `docs/AZURE_VM_OPERATIONS.md` for current production operations.
+Subsystem references:
 
-- pitcher props: `docs/PITCHER_PROPS_HANDOFF.md`
+- pitcher model design: `docs/PITCHER_PROPS_HANDOFF.md`
 - copy-ready pitcher continuation prompt: `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md`
-- Hot Hits: `docs/HOT_HITS_HANDOFF.md`
+- Hot Hits design/research: `docs/HOT_HITS_HANDOFF.md`
 
-The focused pitcher handoff is the canonical source for the August 17 operational state, schema-6 collection status, recent modeling lessons, and next analysis task. Keep this README as the broad shared-project reference.
+Older dated checkpoints below preserve historical decisions and evidence. They
+are not current deployment instructions; use the current source-of-truth docs
+above before acting.
 
 ### Pickup checklist
 
 - Read `Pitcher Props Objective And Design`, `Current scoring inputs`, `Current assumptions`, and this handoff section before changing pitcher logic.
 - Before changing Hot Hits scoring or Discord selection, read `Hot Hits Objective And Design`, `Hot Hits Review And Grading`, and `docs/HOT_HITS_HANDOFF.md`.
 - Run `git status -sb` first and preserve unrelated uncommitted work. Pitcher Props and Hot Hits intentionally share this repository.
-- Confirm the active versions in `mlb_props/version.py`. As of 2026-08-31 they are history schema `7`, model `pitcher-k-hybrid-v2`, tier policy `core-lean-watch-v2`, opportunity shadow `opportunity-shadow-v1`, recency shadow `recency-shadow-v1`, confidence model `pitcher-confidence-calibrated-v2`, and display policy `provisional-confidence-rank-v1`.
+- Confirm active versions in `mlb_props/version.py` (history schema 8 at the
+  2026-09-24 checkpoint); do not copy version numbers from older dated notes.
 - Treat opportunity estimates as observation-only for recommendation logic. Confidence and warning flags may be displayed, but they must not feed scores or tier decisions until the review gates below are met.
-- After transferring a completed Windows collection window, review all saved learning tiers with:
+- To analyze VM history, first pull the required board, grade, and source
+  artifacts from Azure as described in `docs/AZURE_VM_OPERATIONS.md`. The VM
+  grader is authoritative; the Mac is used for subsequent analysis.
 
 ```bash
 python3 backtest.py --all-history --include-watch \
-  --history-dir pitcher_props_from_windows/YYYY-MM-DD_to_YYYY-MM-DD
+  --history-dir <pulled-history-directory>
 ```
 
 - Distinguish late/in-progress line-source coverage from model quality. A thin late slate is not, by itself, evidence that the projection model failed.
 - Before committing, run the relevant tests and inspect the exact staged diff. Stage named files instead of using `git add .`.
 
-### Historical status checkpoint: 2026-07-28
+### Historical status checkpoint: 2026-07-28 (archived; not current operations)
 
-- Current objective: maintain a local-first MLB props research system with pitcher prop screens and a hot-hits one-hit parlay research board, plus scheduled Discord delivery from a Windows PC.
-- Current implementation status: Hot Hits and pitcher props both run in live mode, send Discord notifications, and export history for later grading. Hot Hits uses MLB Stats API data only and does not scrape hit odds. Pitcher props use FanDuel scrape-first line capture, MLB Stats API pitcher/slate data, and experimental DraftKings diagnostics.
+- Objective at that checkpoint: maintain an MLB props research system with pitcher prop screens and a Hot Hits one-hit parlay research board, plus scheduled Discord delivery from a Windows PC.
+- Implementation status at that checkpoint: Hot Hits and pitcher props ran in live mode, sent Discord notifications, and exported history for later grading. Hot Hits used MLB Stats API data only and did not scrape hit odds. Pitcher props used FanDuel scrape-first line capture, MLB Stats API pitcher/slate data, and experimental DraftKings diagnostics.
 - Pitcher implementation status: baseline/version reporting landed in `c4c45ba`; shadow opportunity collection landed in `7925666`. Current `main` includes both plus the Hot Hits Core-first work from `5ce5114`.
 - Immediate pitcher task at that checkpoint: collect schema-3 Windows history for several normal pregame slates without changing scoring or tiers while the first shadow sample accumulated.
 - First shadow review: after 3-5 completed slates, verify population, missingness, rest dates, role flags, confidence distribution, and current-versus-shadow error. Treat this as a data-quality review.
 - Activation review: wait for roughly 50-100 graded candidates, then decide which shadow inputs improve opportunity error. Any production activation must bump the active pitcher model version and receive separate validation.
 - Windows deployment at that checkpoint: the existing pitcher Task Scheduler command remained correct and wrote schema-3 history automatically.
-- Windows production path currently documented throughout this README is `C:\Users\muski\mlb_props`. Change the task wrapper defaults if deploying elsewhere.
+- The Windows production path at that historical checkpoint was `C:\Users\muski\mlb_props`; this path is retired and is not a deployment target.
 - Discord webhooks are channel-specific. Use separate environment variables or wrapper configuration when different projects should post to different Discord channels; do not hard-code webhook URLs in source.
 - Keep terminal output detailed. The Discord hot-hits output should stay compact until an AI summary layer is intentionally added.
 - Hot Hits Task Scheduler needs no command change for the Core-first policy because the defaults live in configuration. Environment overrides must be stored for the same Windows account that runs the task.
@@ -934,7 +959,7 @@ python3 backtest.py --all-history --include-watch \
 - For hot-hits changes, run the relevant live/report command when network access is available.
 - Windows scheduled runs observed Python `3.13.14`; local Mac runs may use `python3`. Keep wrappers configurable via `PythonExe`.
 
-### Status checkpoint: 2026-08-02
+### Historical status checkpoint: 2026-08-02
 
 - The July 29-August 1 schema-3 Lean/Watch board went `8-4`; the broader qualified pool filtered below those tiers went `22-24`. This supports keeping the absolute tier policy intact, but the sample remains small.
 - The user-facing raw score was found to be unstable across slates and non-probabilistic. It is now presented as `Signal balance`, while rank, side edge, opportunity reliability, and recommendation tier are separate concepts.
@@ -942,9 +967,9 @@ python3 backtest.py --all-history --include-watch \
 - When no Core exists, only already-eligible Lean/Watch candidates can receive the `Best Available` display role. Never grade that role as a new tier or describe it as Core.
 - Schema-4 exports add `display_policy_version` and `display_rankings`. Backtests remain based on the saved Core/Lean/Watch candidate arrays, so historical outcome scope is unchanged.
 - The active projection model and tier policy versions remain unchanged because this update does not alter projections, raw score calculations, or recommendation eligibility.
-- Windows Task Scheduler needs no definition change. Pull the new commit and let the existing pitcher wrapper produce the updated console, Discord, and history formats.
+- At that historical checkpoint, Windows Task Scheduler needed no definition change. Current deployment uses the Azure systemd workflow in `docs/AZURE_VM_OPERATIONS.md`.
 
-### Status checkpoint: 2026-08-04
+### Historical status checkpoint: 2026-08-04
 
 - Confidence percentages were added as a versioned shadow/presentation layer after deciding that an abstract additive score was hard for future Discord users to interpret.
 - The percentage estimates win probability at the posted line only. It does not include sportsbook price, implied probability, vig, expected value, or staking advice.
@@ -953,7 +978,7 @@ python3 backtest.py --all-history --include-watch \
 - Discord leads with percentage and label, calls opportunity context `Workload reliability`, and omits signal balance. Terminal/history keep the internal signal for research.
 - Backtest confidence calibration is the next review path. Do not tune label boundaries from a few slates; target at least 50-100 resolved confidence estimates.
 
-### Hot Hits confidence checkpoint: 2026-08-04
+### Historical Hot Hits confidence checkpoint: 2026-08-04
 
 - Thin Aug. 2-4 boards confirmed that last-5 results have structural authority at the initial gate and again in scoring/support/tiering. A zero-Core slate can also result from strict Core support requirements, so the gate is not the only cause of thin action.
 - The production screen and `core-first-v1` Discord card remain unchanged. The new `screen_hot_hitters_with_research()` path returns the same production candidates plus a broader observation pool.
@@ -961,13 +986,13 @@ python3 backtest.py --all-history --include-watch \
 - Terminal output now adds a separate confidence research table. Discord continues to render only the existing production candidates and does not read confidence.
 - New history exports save `confidence_research_pool`, per-profile current-gate failures and confidence estimates, and top-level confidence metadata. `hot_hits_report.py` grades the broader pool while preserving the production boundary for policy simulation.
 - Do not adjust the current gate, confidence weights, or label cutoffs from the first few slates. First verify collection coverage and missingness, then target at least 50-100 resolved research profiles across normal slates for calibration and gate-exclusion analysis.
-- The active projection and tier-policy versions remain unchanged. Existing Windows Task Scheduler definitions still require no modification.
+- At that historical checkpoint, the active projection and tier-policy versions remained unchanged. Windows Task Scheduler is retired.
 - L5 outcome performance was identified as potentially overrepresented because it enters the active K-rate projection, line deltas, recent hit bonuses/penalties, volatility, and several workload/risk adjustments. The working hypothesis is not that all L5 data is bad: L5 opportunity evidence should remain strong, while raw strikeout outcomes and prop hit streaks should receive less authority.
 - `mlb_props/recency_shadow.py` now records the alternative `50% season / 30% L10 / 20% L5` aggregate K/BF projection plus a season/L5 BF-per-out blend. It is leakage-safe and research-only.
 - Schema-6 backtests add L5 outcome-band auditing and current-versus-recency-shadow K MAE, BF MAE, bias, and Brier comparisons. Do not promote the formula from a short or abnormal-slate sample.
 - No scheduled-task definition change is needed for schema 6. Once deployed, the existing scheduled run will collect the new nested fields automatically.
 
-### Status checkpoint: 2026-08-17
+### Historical status checkpoint: 2026-08-17
 
 - `8b23aab` is deployed on Mac/remote main and Windows main. The active production model and tier policy remain unchanged; schema 6 adds research history only.
 - Windows collected 12 schema-6 snapshots from August 5 through August 17 containing 195 qualified candidates and 195 populated recency shadows. August 16 is missing because a machine-wide outbound HTTPS/TLS incident stopped Tennis, WNBA, Hot Hits, pitcher props, and Discord during the morning; service recovered later that day.
@@ -975,7 +1000,7 @@ python3 backtest.py --all-history --include-watch \
 - The schema-6 sample has not been graded. The newest Windows backtest still ends August 2. The next task is a read-only Core/Lean/Watch backtest comparing active versus recency-shadow K/BF error, confidence calibration/Brier, and L5 outcome bands before any production tuning.
 - Use `docs/PITCHER_PROPS_HANDOFF.md` as the canonical pitcher handoff and `docs/PITCHER_PROPS_CONTINUATION_PROMPT.md` to start a fresh agent conversation.
 
-### Status checkpoint: 2026-09-11
+### Historical status checkpoint: 2026-09-11 (superseded by `docs/NEXT_CHECKIN.md`)
 
 - Azure VM is the active production host (Windows retired). Three systemd timers run daily: noon pipeline 12:15 ET, afternoon pipeline 16:45 ET, grader 06:00 ET.
 - First noon pipeline completed successfully; first afternoon and grader runs also succeeded.

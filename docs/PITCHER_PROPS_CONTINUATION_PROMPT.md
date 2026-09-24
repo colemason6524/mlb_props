@@ -1,99 +1,54 @@
 # Pitcher Props Continuation Prompt
 
-Copy and paste the prompt below into a fresh agent conversation.
+Copy the prompt below into a fresh agent conversation. Current repo/VM status
+must be verified from `docs/NEXT_CHECKIN.md`, not inferred from old checkpoints.
 
 ---
-You are taking over development and research for the pitcher-props side of this repository:
 
-```text
-/Users/colemason/mlb_props
-```
+You are continuing MLB pitcher-props research in `/Users/colemason/mlb_props`.
+Hot Hits shares this repository but has a separate handoff. Read
+`docs/NEXT_CHECKIN.md` first for the current operating state and immediate
+project plan, then read `docs/AZURE_VM_OPERATIONS.md` for VM operations and
+`docs/PITCHER_PROPS_HANDOFF.md` for pitcher model design.
 
-Primary focus: MLB pitcher strikeout props. Hot Hits shares this repository but has a separate handoff. Do not change Hot Hits unless the task requires shared infrastructure and you explain the overlap.
+Current operating rules:
 
-Before making code changes:
+- The Mac is the source-edit/test/commit/analysis machine. Azure (`ssh azure`)
+  runs production collection, board publication, and daily grading via
+  systemd. Windows is retired; do not follow Windows Task Scheduler commands in
+  archived documentation.
+- Deploy intentional changes by committing/pushing from the Mac and pulling on
+  Azure with `git pull --ff-only`. Preserve unrelated working-tree changes.
+- The grade review records full pitcher boxscore lines, historical team
+  situation, exact source-input joins, and noon/afternoon market movement. That
+  movement is descriptive, **not CLV**.
+- The analysis window is Sep 10–22, 2026. Continue collecting the full board
+  through the regular season. Do not introduce family-level or selection cuts;
+  learn which individual model aspects repeat out of sample.
+- Keep playoff games as a separately labeled period.
 
-1. Read `README.md` fully, especially:
-   - Pitcher Props Objective And Design
-   - Forecast board (production entry point)
-   - Daily grading
-   - Current scoring inputs
-   - Current assumptions
-   - Handoff Notes
-2. Read `docs/PITCHER_PROPS_HANDOFF.md` fully.
-3. Inspect `git status -sb`, the active branch, and recent commits. Preserve unrelated `.gitignore`, tier-comment, Hot Hits, transferred-history, log, and analysis work.
-4. Inspect:
-   - `run_forecast_pipeline.py` (production entry point)
-   - `run_forecast_board.py` (board builder)
-   - `grade_forecast_board.py` (daily grader)
-   - `run_nightly.py`
-   - `backtest.py`
-   - `mlb_props/screener.py`
-   - `mlb_props/tiers.py`
-   - `mlb_props/pitcher_confidence.py`
-   - `mlb_props/pitcher_presentation.py`
-   - `mlb_props/opportunity.py`
-   - `mlb_props/recency_shadow.py`
-   - `mlb_props/output.py`
-   - `mlb_props/models.py`
-   - `mlb_props/version.py`
-   - `mlb_props/sources/`
-   - pitcher task wrappers and relevant tests
-5. Inspect Azure VM directly with `ssh azure`; do not copy logs/history to Mac unless useful.
+Before any code change:
 
-Current deployed state as of 2026-09-11:
+1. Run `git status -sb`, inspect recent commits, and preserve unrelated edits.
+2. Verify active model/version values in `mlb_props/version.py`.
+3. Read the current learning-review artifact and verify its exact-input audit
+   before interpreting a feature association.
+4. State the proposed scope and validation plan. If it would alter production
+   selection, probabilities, model inputs, or timers beyond an agreed plan,
+   pause and ask first.
+5. Add focused tests, run the full test suite, inspect the staged diff, and
+   stage named files only. Never use `git add .`.
 
-- production commit `2bdeeb6`
-- history schema `8`
-- active model `pitcher-k-hybrid-v2`
-- tiers `core-lean-watch-v2`
-- confidence `pitcher-confidence-calibrated-v2`
-- display `provisional-confidence-rank-v1`
-- opportunity shadow `opportunity-shadow-v1`
-- recency shadow `recency-shadow-v1`
-- Azure VM: `ssh azure`, repo at `~/mlb_props`
-- noon pipeline timer: 12:15 ET, afternoon: 16:45 ET, grader: 06:00 ET
-- First noon pipeline succeeded 2026-09-11, sent Discord, exported history
+Useful files:
 
-Important model direction:
-
-- Core remains strict; Lean/Watch remain broader learning tiers.
-- `Best Available` never promotes a Lean/Watch play to Core.
-- `Signal balance` is an internal additive diagnostic, not probability.
-- confidence is calibrated (v1, shrink 0.55, capped 57%), price-independent, and cannot be described as EV or profitability.
-- current L5 influence may be too strong for strikeout outcomes, but recent workload/opportunity remains important.
-- `recency-shadow-v1` tests aggregate K/BF weighted 50% season, 30% L10, 20% L5 and BF/out weighted 60% L5, 40% season.
-- shadows do not affect production scoring, qualification, tiers, terminal, or Discord.
-- player IDs plus current slate/lineup context are the chosen trade-deadline safeguard; no frequent roster polling is planned.
-- FanDuel is the primary line source; DraftKings remains diagnostic.
-
-Current evidence state:
-
-- Azure VM has the production pipeline: noon/afternoon board + daily grader.
-- Windows has 12 schema-6 snapshots from August 5–17 (historical, retired).
-- The forecast board produces pitcher K + game ML/RL/totals from fitted engines.
-- Board grading settles priced PENDING ROI rows and posts Discord recap.
-- Do not tune production from raw samples without graded evidence.
-
-Your first task is read-only analysis:
-
-1. Verify the current Azure timers, repo commit, board artifacts, and latest logs.
-2. Grade the board history with the daily grader, preserving point-in-time integrity.
-3. Compare pitcher K accuracy, game ML/RL/totals calibration, and priced ROI.
-4. Report what worked, what did not, sample limitations, and whether any model component deserves adjustment.
-5. Do not change tiers or engines until you demonstrate the evidence and receive approval.
-
-Operational note: on August 16, Tennis Abstract, Bovada, Discord, ESPN, and MLB HTTPS requests all timed out during the morning. The 3 PM tennis run and both August 17 MLB tasks succeeded. Treat it as a one-off unless it recurs. If it recurs, recommend bounded HTTP/Discord retries, cache fallback, recovery scheduling, and PowerShell traceback logging repair.
-
-Azure VM operational notes:
-- Connection: `ssh azure` (alias in `~/.ssh/config`)
-- Timers: noon 12:15 ET, afternoon 16:45 ET, grader 06:00 ET
-- Runner: `~/mlb_props/scripts/run_linux_task.sh <task>`
-- Secrets: `~/.config/mlb_props/env`
-- Health pass: `ssh azure 'systemctl --user list-timers --all | grep mlb'`
-
-Before any later implementation, explain the proposed isolated change, validation method, version bump requirements, and how production behavior will remain auditable. Use named-file staging, run the full test suite with `PYTHONPYCACHEPREFIX=.pycache`, and never use `git add .` in this mixed worktree.
-
-Start by summarizing your verified understanding and the current board/grading state. Do not modify production logic until that summary is accurate.
+- `run_forecast_pipeline.py`: scheduled collection-and-publication entry point.
+- `run_forecast_board.py`: board builder and prediction-context ledger fields.
+- `grade_forecast_board.py`: VM grader, exact-input audit, and daily learning
+  review.
+- `scripts/analyze_sep_window.py`: reproducible Sep 10–22 research analysis.
+- `outputs/grades/learning_review_<date>.md` and `.json`: daily diagnostic
+  artifacts (pull from Azure to the Mac for season review).
+- `evidence/research/FINDINGS.md`: local, gitignored detailed baseline note;
+  use the committed `docs/NEXT_CHECKIN.md` as the durable summary.
 
 ---

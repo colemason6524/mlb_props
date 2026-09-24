@@ -1,9 +1,15 @@
-# Azure VM Operations (active 2026-09-11)
+# Azure VM Operations (verified 2026-09-24)
 
-The Windows desktop is retired (chronic wifi loss + required restarts). Daily
-MLB collection now runs on a cheap Azure VM. The Mac is the source of documents
-and grading; the Windows hard drive retains historical logs/exports. The VM
-stays lean: repo + outputs + logs only. No bulk history, no zips.
+The Windows desktop is retired. The Mac is used for source edits, tests,
+commits, and analysis. The Azure VM is the production host for MLB collection,
+board publication, and daily grading. Normal deployment is Mac `git push`, then
+`ssh azure 'cd ~/mlb_props && git pull --ff-only'`. Pull grade/review artifacts
+back to the Mac for season analysis. The VM stays lean: repo + outputs + logs;
+do not copy bulk archives or analysis folders to it.
+
+`docs/NEXT_CHECKIN.md` is the current project checkpoint. Windows-specific
+commands elsewhere in this repository are historical and must not be used for
+current operations.
 
 ## Connection
 
@@ -65,7 +71,10 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
   `mlb-props-tmux.service`) is DISABLED and its processes are gone. Do not
   re-enable it — it would double-send Discord cards.
 
-## 2026-09-08 validation results (pre-first-fire)
+## Archived validation notes (2026-09-08 to 2026-09-11)
+
+These are retained as historical deployment evidence, not current VM status.
+For current status use `docs/NEXT_CHECKIN.md` and verify timers/artifacts live.
 
 Pre-flight pass (~00:15 ET, 11h before first fire):
 
@@ -78,8 +87,6 @@ Pre-flight pass (~00:15 ET, 11h before first fire):
   (3 from 9/7 tmux/manual, 1 from the E2E unit test).
 - VM state: 55G free disk, ~450M RAM available, lock file present, WIP tree
   intact (still uncommitted — commit deliberately before any rebuild).
-
-First-fire results below should be appended after 2026-09-08 11:45 ET.
 
 - Hot-hits dry run (no Discord, no export): full pipeline OK from Azure —
   14 slate games, 252 batters, 12 qualified, Savant shadow 124/124, Python
@@ -106,20 +113,26 @@ one rendered board (`forecast_board_<date>_<slot>.json`), and a task log ending
 `exit code 0`. The board fails closed if either required family is missing or
 empty.
 
-## Pull day's history to the Mac (grading happens here, not on the VM)
+## Pull grades and review artifacts to the Mac
 
 ```bash
-mkdir -p pitcher_props_from_windows/vm game_markets_from_windows/vm
-scp 'azure:~/mlb_props/outputs/history/pitcher_props_*.json' pitcher_props_from_windows/vm/
-scp 'azure:~/mlb_props/outputs/history/game_markets_*.json' game_markets_from_windows/vm/
+mkdir -p outputs/grades
+scp 'azure:~/mlb_props/outputs/grades/forecast_board_*.json' outputs/grades/
+scp 'azure:~/mlb_props/outputs/grades/learning_review_*.json' outputs/grades/
+scp 'azure:~/mlb_props/outputs/grades/learning_review_*.md' outputs/grades/
 ```
+
+The grader runs on the VM. Pull source history only when an analysis needs the
+underlying exports; the board's recorded input paths define which exports were
+used for each run.
 
 ## VM hygiene (do not overcrowd)
 
 - Keep only the repo, `outputs/`, and `logs/` on the VM. The Mac holds
-  documents/analysis; the Windows hard drive holds historical exports.
+  documents and analysis. Windows is retired.
 - Do not transfer zips, `.analysis/` folders, or history archives to the VM.
 - Repo sync from the Mac side: `git push origin main`, then
-  `ssh azure 'cd mlb_props && git pull --ff-only'`. The VM worktree currently
-  carries uncommitted local work (ActionNetwork game-lines source, tests,
-  scheduler scripts) — commit/push it deliberately before any rebuild.
+  `ssh azure 'cd mlb_props && git pull --ff-only'`. At the 2026-09-24 check,
+  Mac and VM both had implementation commit `b7d5167`; pre-existing untracked
+  scheduler/tmux files were present on both worktrees. Preserve them and inspect
+  `git status` before staging or deployment.
