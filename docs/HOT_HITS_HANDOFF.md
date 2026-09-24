@@ -446,7 +446,8 @@ Project invariants:
 
 Historical state as of 2026-08-21 (not the current data-availability claim):
 
-- origin/main is 0ff3562; Hot Hits confidence was deployed in 7986175 and documented in 4f7d60e.
+- At that historical checkpoint, `origin/main` was `0ff3562`; Hot Hits confidence
+  had been deployed in `7986175` and documented in `4f7d60e`.
 - The August 5–20 logs show 15 successful runs out of 16, Discord sent on every successful run, 170 production candidates, 1,649 research profiles, and 1,649/1,649 Savant coverage.
 - The broader pool worked operationally, but no predictive conclusion has been established.
 - Critical blocker: C:\Users\muski\mlb_props\outputs\history is missing even though the logs recorded successful export paths. Without candidate-level JSON, the confidence and L5 gate questions cannot be graded.
@@ -471,7 +472,8 @@ Core-first implementation:
 
 Confidence research deployment on 2026-08-04:
 
-- commit `7986175` was fast-forwarded to `main` and pulled by the Windows production checkout
+- commit `7986175` was fast-forwarded to `main` and pulled by the then-active
+  Windows production checkout (retired; not a current deployment destination)
 - 65 repository tests passed locally; the 33 focused Hot Hits tests passed on Windows
 - Python compilation and staged-diff checks passed
 - a Windows no-Discord/no-export live run preserved 15 production candidates while collecting 127 confidence research profiles
