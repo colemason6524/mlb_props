@@ -281,8 +281,9 @@ does not publish, that is a **process incident, not a quiet day**:
    policy. Write-up: `SEASON_2026_RECAP.md` Finding 9.
 4. **Verify a playoff-day board** end-to-end: pipeline runs → board written →
    grader settles it → era label reads `postseason` in `learning_review_*.md`.
-   Requires the era work to be deployed to the VM first; it is committed-but-not-
-   deployed as of 2026-09-28.
+   Era work is **deployed** (VM HEAD `a89f4fb`, 2026-09-28); only this
+   confirmation remains. Time-gated: the Wild Card opens 2026-09-29 and the
+   grader timer settles it at 06:00 ET 2026-09-30.
 5. **Pre-register the Finding 8 pitcher-K line rule** before the postseason
    starts: *`line ≤ 3.5` K plays excluded, or require an explicit favorable
    `matchup_rating` override.* Baseline it must beat: **−25.56u on 57 plays
@@ -300,3 +301,13 @@ does not publish, that is a **process incident, not a quiet day**:
 7. **Optional, not yet done:** stamp `era` into the `grade_screen` result dict in
    `outputs/grades/forecast_board_<date>.json`, not just the learning review, so
    the artifact itself is self-describing.
+8. **Known production behavior: an off-day run records as `failed`.**
+   `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
+   fails the publish when any required family is empty and does not separate
+   "no games this date" from "sources returned nothing". On 2026-09-27 the
+   afternoon slot exited 1 with
+   `required board family unavailable: pitcher_k=empty, game=empty`; 2026-09-28
+   has zero games, so both slots today record `forecast_board: failed`, and every
+   postseason off day repeats it. **Decision pending: skip-and-succeed on an
+   empty slate, or keep the fail-closed gate.** No pick impact — 2026-09-29's
+   first game is 18:00Z, so the noon slot still collects fresh pregame lines.

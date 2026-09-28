@@ -174,10 +174,14 @@ displayed at full confidence for a single reader.
    pre-registered `< 52.4%` kill line. The always-under baseline (**52.8%,
 n=180**) was computed manually this session because the standing grader reports
    `baseline_rows 0`; see Finding 9 and the new playbook open item.
-4. **Commit and deploy the era work**, then verify one playoff-day cycle
-   end-to-end: pipeline runs → board written → grader settles it → the learning
-   review reads `Evidence era: postseason`.
-5. **Pre-register the pitcher-K line rule** (playbook Open item 4) before
+4. ~~Commit and deploy the era work.~~ **DONE 2026-09-28.** Three commits
+   (`a9f1ade`, `9251671`, `a89f4fb`) pushed and fast-forwarded onto the VM;
+   `git rev-parse --short HEAD` on the VM reads `a89f4fb`. **Remaining half:**
+   verify one playoff-day cycle end-to-end — pipeline runs → board written →
+   grader settles it → the learning review reads `Evidence era: postseason`.
+   Time-gated: no games 2026-09-28; the Wild Card opens 2026-09-29 and the
+   grader timer settles it at 06:00 ET 2026-09-30.
+5. **Pre-register the pitcher-K line rule** (playbook Open item 5) before
    2026-09-29: exclude `line ≤ 3.5` K plays or require a favorable
    `matchup_rating` override; baseline to beat is −25.56u on 57 plays. Finding 9
    is independent corroboration — the Daily Card failed by routing volume into
@@ -188,6 +192,20 @@ n=180**) was computed manually this session because the standing grader reports
 7. Optional, not yet done: stamp `era` into the `grade_screen` result dict of
    `forecast_board_<date>.json`, not just the learning review, so the artifact is
    self-describing.
+8. **Known production behavior — an off-day run is recorded as `failed`.**
+   `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
+   refuses to publish when any required family is empty, and it does **not**
+   distinguish *"MLB has no games this date"* from *"the sources returned
+   nothing"*. Evidence: the final regular-season slate, 2026-09-27, exited 1 with
+   `required board family unavailable: pitcher_k=empty, game=empty`
+   (`outputs/run_status.json`, 2026-09-27T20:45:17Z) — the afternoon slot's games
+   had already started. 2026-09-28 has zero games (verified live against
+   `statsapi.mlb.com`), so both of today's slots will record
+   `forecast_board: failed`, and every postseason off day will repeat it.
+   **Decision pending: skip-and-succeed on an empty slate, or keep failing
+   closed.** No picks are affected — 2026-09-29's first game is 18:00Z, so the
+   noon slot still collects fresh pregame lines. Deliberately not changed without
+   that decision.
 
 Pull review artifacts from the Mac with the verified SSH form (the `azure`
 config alias was never confirmed; the literal host and key are):
