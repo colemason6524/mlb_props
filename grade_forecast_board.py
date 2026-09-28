@@ -1375,7 +1375,7 @@ def render_learning_markdown(
     lines = ["## Daily learning review", ""]
     lines.append(f"Decided plays: {len(decided)}")
     if era:
-        lines.append(f"Evidence era: {era} (2026 seasons are reported separately)")
+        lines.append(f"Evidence era: {era} (regular season and postseason are never blended)")
     lines.append("")
     for label, key in LEARNING_SECTIONS:
         table = groups.get(key) or {}
