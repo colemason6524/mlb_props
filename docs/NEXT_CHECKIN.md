@@ -28,11 +28,11 @@ confidence rather than adopting a cautious shadow posture.**
   the Mac.
 - **Windows:** retired. Windows Task Scheduler instructions in older docs are
   archive material only.
-- **Current verified deployed implementation:** Mac and VM are both at HEAD
-  `97222a6` (2026-09-28): the era-labeling work (`a9f1ade`), the season recap and
-  postseason playbook (`9251671`), a wording fix on the era line (`a89f4fb`), and
-  the documentation of the off-day fail-closed finding (`97222a6`). Always verify
-  `git log` and `git status` before work.
+- **Current verified deployed implementation:** Mac and VM are at the same HEAD
+  as of 2026-09-28 (era-labeling work, the season recap and postseason playbook,
+  and their documentation corrections). Always verify `git log --oneline -3` and
+  `git status` on both machines before work; do not trust a hash copied into a
+  document.
 - **Pre-existing work to preserve:** on the Mac, modified
   `scripts/fit_batter_engine.py` and `scripts/fit_pitcher_engine.py` plus
   untracked tmux/systemd migration scripts and the untracked `.codewhale/` and
@@ -174,13 +174,27 @@ displayed at full confidence for a single reader.
    pre-registered `< 52.4%` kill line. The always-under baseline (**52.8%,
 n=180**) was computed manually this session because the standing grader reports
    `baseline_rows 0`; see Finding 9 and the new playbook open item.
-4. ~~Commit and deploy the era work.~~ **DONE 2026-09-28.** Three commits
-   (`a9f1ade`, `9251671`, `a89f4fb`, `97222a6`) pushed and fast-forwarded onto
-   the VM; `git rev-parse --short HEAD` on the VM reads `97222a6`. **Remaining half:**
-   verify one playoff-day cycle end-to-end — pipeline runs → board written →
-   grader settles it → the learning review reads `Evidence era: postseason`.
-   Time-gated: no games 2026-09-28; the Wild Card opens 2026-09-29 and the
-   grader timer settles it at 06:00 ET 2026-09-30.
+4. ~~Commit and deploy the era work.~~ **DONE 2026-09-28.** Pushed and
+   fast-forwarded onto the VM; confirm with `git rev-parse --short HEAD` **on the
+   VM** rather than trusting a hash written here. Commits of record: `a9f1ade`
+   (era labeling), `9251671` (season recap + postseason playbook), then
+   documentation corrections. **Remaining half:** verify one playoff-day cycle
+   end-to-end — pipeline runs → board written → grader settles it → the learning
+   review reads `Evidence era: postseason`. Time-gated: no games 2026-09-28; the
+   Wild Card opens 2026-09-29 and the grader timer settles it at 06:00 ET
+   2026-09-30.
+   **Baseline note (do not misread as a defect):**
+   `outputs/grades/learning_review_2026-09-27.md` has **no** era line and its
+   `learning` dict has no `era` key. That is correct — it was written
+   2026-09-27T10:00:01Z by the 06:00 ET timer, roughly 5.5 hours *before* the era
+   work reached the VM. The deployed path is proven correct on the same rows,
+   non-mutating, using the production call shape
+   (`build_learning_review(rows, board_context, screen)`,
+   `grade_forecast_board.py:1093`): `era=regular_season`, `decided=50` (equal to
+   the artifact's own `learning.decided`), and the rendered markdown contains
+   `Evidence era: regular_season (regular season and postseason are never
+   blended)`. The first era-labeled production review is therefore the one
+   covering the first graded postseason slate.
 5. **Pre-register the pitcher-K line rule** (playbook Open item 5) before
    2026-09-29: exclude `line ≤ 3.5` K plays or require a favorable
    `matchup_rating` override; baseline to beat is −25.56u on 57 plays. Finding 9

@@ -258,7 +258,10 @@ does not publish, that is a **process incident, not a quiet day**:
   keep firing. `sports-mlb-grade-board.timer` (06:00 ET) keeps grading.
 - A postseason date with no `forecast_board_*` artifact in `outputs/grades/` is
   a stop-and-look event. Off-days are the only expected gaps, and there is
-  exactly one scheduled before the opener (2026-09-28).
+  exactly one scheduled before the opener (2026-09-28). **Check the slate before
+  calling it an incident:** an off-day currently records `forecast_board: failed`
+  instead of skipping (open item 8), and that is not the same event as a missing
+  board on a day with games.
 - Any change to which families publish is a **deliberate, announced** change, not
   a side effect of a date check.
 
@@ -281,9 +284,12 @@ does not publish, that is a **process incident, not a quiet day**:
    policy. Write-up: `SEASON_2026_RECAP.md` Finding 9.
 4. **Verify a playoff-day board** end-to-end: pipeline runs → board written →
    grader settles it → era label reads `postseason` in `learning_review_*.md`.
-   Era work is **deployed** (VM HEAD `97222a6`, 2026-09-28); only this
-   confirmation remains. Time-gated: the Wild Card opens 2026-09-29 and the
-   grader timer settles it at 06:00 ET 2026-09-30.
+   Era work is **deployed** (2026-09-28); only this confirmation remains, and it
+   is time-gated: the Wild Card opens 2026-09-29 and the grader timer settles it
+   at 06:00 ET 2026-09-30. Note that `learning_review_2026-09-27.md` carries no
+   era line because it was graded before the deployment — the first era-labeled
+   production review is the one covering the first graded postseason slate. See
+   `NEXT_CHECKIN.md` item 4 for the non-mutating proof on the real 09-27 rows.
 5. **Pre-register the Finding 8 pitcher-K line rule** before the postseason
    starts: *`line ≤ 3.5` K plays excluded, or require an explicit favorable
    `matchup_rating` override.* Baseline it must beat: **−25.56u on 57 plays
