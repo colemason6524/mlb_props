@@ -320,6 +320,20 @@ Pre-registered success rule for the September validation window:
 - `52.4-55%`: marginal; requires a price-based EV check before any trust
 - `< 52.4%`: the policy is killed honestly
 
+**Resolved 2026-09-28 — the rule killed the policy.** Over 25 card-bearing
+snapshots (2026-09-01 → 09-27) the card finished **38–40, 48.7%, n=78**
+(**−5.45u** at −110; **−9.15u** at collected under prices against a **0.5560**
+average breakeven). That is inside the `< 52.4%` kill band, and the card also lost
+to simply taking every under in the same snapshots (**95–85, 52.8%, n=180** —
+computed by hand, because the standing summary reports `baseline_rows 0`). The
+`n >= 100` trust denominator was never reached, so the kill rests on the point
+estimate, not on a powered test. Mechanically, the frozen `|edge| <= 1.0` gate
+routed 47% of card volume to pitchers projected below a `.180` K rate (43.2%)
+and 22% to `line <= 3.5` (41.2%) — the two worst buckets in the regular-season
+study. **`daily-unders-card-v1` is not carried into the postseason as a staking
+policy.** Evidence: `evidence/grades/daily_card_summary.json`; write-up:
+`docs/SEASON_2026_RECAP.md` Finding 9.
+
 The no-vig market-support gate is deferred to `daily-unders-card-v2` until roughly two weeks of price-shadow rows accumulate. Every export saves the exact delivered card (`daily_card` rows plus `daily_card_policy_version`, schema 8) so grading uses delivered rows, not a re-derivation. The morning backtest grades the card automatically; `pitcher_grading.daily_card_summary` computes hit rate, units at -110, and the always-under baseline for weekly review.
 
 Every eligible candidate and full starter-board entry now saves:
