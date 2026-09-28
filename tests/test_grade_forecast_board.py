@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import grade_forecast_board as grade
+from mlb_props.version import evidence_era
 
 
 class PureGraderTests(unittest.TestCase):
@@ -385,6 +386,29 @@ class LearningReviewTests(unittest.TestCase):
         self.assertIn("Pitcher by workload/conversion", review["markdown"])
         self.assertIn("Noon-to-afternoon market movement", review["markdown"])
         self.assertIn("Exact input-join audit", review["markdown"])
+
+    def test_learning_review_labels_the_evidence_era(self) -> None:
+        # The closed regular-season sample and the postseason are never blended
+        # anonymously: every dated review carries its era label.
+        regular = grade.build_learning_review([self._decided()], screen_date="2026-09-27")
+        self.assertEqual(regular["era"], "regular_season")
+        self.assertIn("Evidence era: regular_season", regular["markdown"])
+
+        postseason = grade.build_learning_review([self._decided()], screen_date="2026-09-29")
+        self.assertEqual(postseason["era"], "postseason")
+        self.assertIn("Evidence era: postseason", postseason["markdown"])
+
+        # An undated review stays unlabeled rather than guessing.
+        undated = grade.build_learning_review([self._decided()])
+        self.assertIsNone(undated["era"])
+        self.assertNotIn("Evidence era", undated["markdown"])
+
+    def test_evidence_era_boundaries(self) -> None:
+        self.assertEqual(evidence_era("2026-09-27"), "regular_season")
+        self.assertEqual(evidence_era("2026-09-28"), "between")
+        self.assertEqual(evidence_era("2026-09-29"), "postseason")
+        self.assertIsNone(evidence_era(None))
+        self.assertIsNone(evidence_era("not-a-date"))
 
 
 class SummaryTests(unittest.TestCase):

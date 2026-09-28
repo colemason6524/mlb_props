@@ -29,6 +29,7 @@ from mlb_props.config import OUTPUTS_DIR
 from mlb_props.notifiers.discord import send_discord_message
 from mlb_props.run_ledger import record_run
 from mlb_props.utils import fetch_json
+from mlb_props.version import evidence_era
 from run_forecast_board import (
     american_payout,
     delivery_already_sent,
@@ -1089,7 +1090,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
     canonical_summary = summarize(canonical_rows) if canonical_rows else None
     canonical_roi = roi_summary(canonical_rows) if canonical_rows else None
     settlements = [r for r in canonical_rows if r.get("_roi_index") is not None]
-    learning = build_learning_review(canonical_rows, board_context) if canonical_rows else None
+    learning = build_learning_review(canonical_rows, board_context, screen) if canonical_rows else None
 
     latest = latest_run_id(list(revisions.keys()))
     pending_total = sum(r["summary"]["totals"]["pending"] for r in revisions.values())
@@ -1200,8 +1201,18 @@ def _gap_band(gap) -> str:
     return ">10pt"
 
 
-def build_learning_review(rows: list[dict], board_context: dict | None = None) -> dict:
+def build_learning_review(
+    rows: list[dict],
+    board_context: dict | None = None,
+    screen_date: str | None = None,
+) -> dict:
     """Descriptive win/loss breakdowns over one date's canonical graded rows."""
+    if screen_date is None:
+        for row in rows:
+            if row.get("screen_date"):
+                screen_date = row["screen_date"]
+                break
+    era = evidence_era(screen_date)
     decided = [r for r in rows if r.get("result") in (WIN, LOSS)]
     pitcher = [r for r in decided if r.get("family") == "pitcher_k"]
     groups = {
@@ -1228,11 +1239,13 @@ def build_learning_review(rows: list[dict], board_context: dict | None = None) -
     movement = build_market_movement(rows, board_context or {})
     audit = build_input_audit(rows)
     return {
+        "screen_date": screen_date,
+        "era": era,
         "decided": len(decided),
         "groups": groups,
         "market_movement": movement,
         "input_audit": audit,
-        "markdown": render_learning_markdown(decided, groups, movement, audit),
+        "markdown": render_learning_markdown(decided, groups, movement, audit, era),
     }
 
 
@@ -1352,9 +1365,17 @@ LEARNING_SECTIONS = (
 )
 
 
-def render_learning_markdown(decided: list[dict], groups: dict, movement: dict, audit: dict) -> str:
+def render_learning_markdown(
+    decided: list[dict],
+    groups: dict,
+    movement: dict,
+    audit: dict,
+    era: str | None = None,
+) -> str:
     lines = ["## Daily learning review", ""]
     lines.append(f"Decided plays: {len(decided)}")
+    if era:
+        lines.append(f"Evidence era: {era} (2026 seasons are reported separately)")
     lines.append("")
     for label, key in LEARNING_SECTIONS:
         table = groups.get(key) or {}

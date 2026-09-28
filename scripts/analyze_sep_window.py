@@ -1,4 +1,5 @@
-"""Deep win/loss attribution study for the forecast board, 2026-09-10..2026-09-22.
+"""Deep win/loss attribution study for the forecast board over a date window
+(default 2026-09-10..2026-09-22; the full-board graded sample starts 2026-09-10).
 
 Read-only research over an outputs tree (default: the Azure VM's ~/mlb_props).
 It joins graded canonical rows to:
@@ -12,6 +13,8 @@ harm/help screen with Benjamini-Hochberg FDR.
 
 Usage:
   python3 scripts/analyze_sep_window.py --root ~/mlb_props --out /tmp/research
+  python3 scripts/analyze_sep_window.py --start 2026-09-10 --end 2026-09-27 \
+      --root ~/mlb_props --out evidence/research
 """
 from __future__ import annotations
 
@@ -27,6 +30,8 @@ from pathlib import Path
 STATS_BASE = "https://statsapi.mlb.com/api/v1"
 WINDOW_START = "2026-09-10"
 WINDOW_END = "2026-09-22"
+WINDOW_START_DEFAULT = WINDOW_START
+WINDOW_END_DEFAULT = WINDOW_END
 FAMILIES = ("pitcher_k", "game_ml", "game_total", "game_rl")
 
 
@@ -590,10 +595,22 @@ def feature_screen(rows, min_n=12):
 
 
 def main():
+    global WINDOW_START, WINDOW_END
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default=str(Path.home() / "mlb_props"))
     parser.add_argument("--out", default="/tmp/research")
+    parser.add_argument(
+        "--start",
+        default=WINDOW_START_DEFAULT,
+        help="first screen date in the window (YYYY-MM-DD); default %(default)s",
+    )
+    parser.add_argument(
+        "--end",
+        default=WINDOW_END_DEFAULT,
+        help="last screen date in the window (YYYY-MM-DD); default %(default)s",
+    )
     args = parser.parse_args()
+    WINDOW_START, WINDOW_END = args.start, args.end
     root = Path(args.root).expanduser()
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
@@ -792,7 +809,7 @@ def main():
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1, default=str))
 
     # -------- report
-    lines = [f"# Sep 10-22 Forecast Board Win/Loss Study", ""]
+    lines = [f"# Forecast Board Win/Loss Study — {WINDOW_START} → {WINDOW_END}", ""]
     lines.append(f"Decided plays: {metrics['overall']['n']}  "
                  f"({metrics['overall']['wins']}-{metrics['overall']['losses']}, "
                  f"{metrics['overall']['hit_rate']:.1%})  "

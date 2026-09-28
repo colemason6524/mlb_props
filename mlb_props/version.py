@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date as _date
+
 
 # Increment the schema version when the shape of exported pitcher history changes.
 # Schema 8 (2026-08-31) is additive: exports gain a `daily_card` array and a
@@ -69,3 +71,39 @@ GAME_MARKETS_SOURCE_POLICY_VERSION = "bovada-primary-fanduel-nonwhole-total-pref
 # record a Hit" (plus the 2+ Hits alt line) captured per event at run time.
 # Observation-only research prices; never used for EV, gating, or Discord.
 HOT_HITS_PRICE_SHADOW_VERSION = "hot-hits-price-shadow-v1"
+
+# --- Evidence eras (2026) ---------------------------------------------------
+# The 2026 regular season is a CLOSED sample. Its graded window is frozen at the
+# dates below: findings, calibration, and slice rates fitted there stay the
+# basis for selection, and postseason results never revise them. Postseason
+# observations accumulate in parallel under their own era label and are only
+# promoted to the basis once they are large enough to stand alone.
+#
+# The graded sample starts 2026-09-10, the first date the full-board grading
+# workflow wrote forecast_board_*/learning_review_* artifacts. Earlier dates
+# exist as pitcher-only snapshots and are not part of the full-board sample.
+REGULAR_SEASON_2026_SAMPLE_START = "2026-09-10"
+REGULAR_SEASON_2026_SAMPLE_END = "2026-09-27"
+POSTSEASON_2026_START = "2026-09-29"
+
+
+def evidence_era(screen_date: str | None) -> str | None:
+    """Return the evidence era for an ISO `screen_date`, or None when undated.
+
+    Eras are reporting labels only: they separate the closed regular-season
+    sample from postseason results so the two are never blended by accident.
+    They do not change projections, scores, tiers, or selection.
+    """
+    if screen_date is None:
+        return None
+    try:
+        day = _date.fromisoformat(str(screen_date)[:10])
+        regular_end = _date.fromisoformat(REGULAR_SEASON_2026_SAMPLE_END)
+        postseason_start = _date.fromisoformat(POSTSEASON_2026_START)
+    except ValueError:
+        return None
+    if day <= regular_end:
+        return "regular_season"
+    if day >= postseason_start:
+        return "postseason"
+    return "between"
