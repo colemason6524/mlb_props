@@ -28,23 +28,23 @@ confidence rather than adopting a cautious shadow posture.**
   the Mac.
 - **Windows:** retired. Windows Task Scheduler instructions in older docs are
   archive material only.
-- **Current verified deployed implementation:** Mac and VM included implementation
-  commit `b7d5167` before this documentation refresh. Documentation commits
-  (`090c3b8`, `3e6c393`) advanced `main` afterward. Always verify `git log` and
-  `git status` before work.
+- **Current verified deployed implementation:** Mac and VM are both at HEAD
+  `97222a6` (2026-09-28): the era-labeling work (`a9f1ade`), the season recap and
+  postseason playbook (`9251671`), a wording fix on the era line (`a89f4fb`), and
+  the documentation of the off-day fail-closed finding (`97222a6`). Always verify
+  `git log` and `git status` before work.
 - **Pre-existing work to preserve:** on the Mac, modified
   `scripts/fit_batter_engine.py` and `scripts/fit_pitcher_engine.py` plus
   untracked tmux/systemd migration scripts and the untracked `.codewhale/` and
   `.dashboard/` directories. The VM also has pre-existing untracked tmux
   scheduler files. Do not stage, delete, or re-enable these as part of unrelated
   work.
-- **Uncommitted era work at this writing:** `grade_forecast_board.py`,
+- **Era work status:** committed and deployed. `grade_forecast_board.py`,
   `mlb_props/version.py`, `scripts/analyze_sep_window.py`,
-  `tests/test_grade_forecast_board.py` are modified locally but not yet
-  committed or deployed, together with the new
-  `docs/SEASON_2026_RECAP.md`, `docs/POSTSEASON_2026_PLAYBOOK.md`, and this
-  file. The era labeling is reporting-only and does not change selection, so
-  the VM is safe until it is deployed.
+  `tests/test_grade_forecast_board.py`, and the new `docs/SEASON_2026_RECAP.md`,
+  `docs/POSTSEASON_2026_PLAYBOOK.md`, `docs/NEXT_CHECKIN.md` are all on `main`
+  and fast-forwarded onto the VM. The era labeling is reporting-only and never
+  changes selection, so nothing about this deployment can alter a pick.
 
 ## Production schedule
 
@@ -175,8 +175,8 @@ displayed at full confidence for a single reader.
 n=180**) was computed manually this session because the standing grader reports
    `baseline_rows 0`; see Finding 9 and the new playbook open item.
 4. ~~Commit and deploy the era work.~~ **DONE 2026-09-28.** Three commits
-   (`a9f1ade`, `9251671`, `a89f4fb`) pushed and fast-forwarded onto the VM;
-   `git rev-parse --short HEAD` on the VM reads `a89f4fb`. **Remaining half:**
+   (`a9f1ade`, `9251671`, `a89f4fb`, `97222a6`) pushed and fast-forwarded onto
+   the VM; `git rev-parse --short HEAD` on the VM reads `97222a6`. **Remaining half:**
    verify one playoff-day cycle end-to-end — pipeline runs → board written →
    grader settles it → the learning review reads `Evidence era: postseason`.
    Time-gated: no games 2026-09-28; the Wild Card opens 2026-09-29 and the

@@ -281,7 +281,7 @@ does not publish, that is a **process incident, not a quiet day**:
    policy. Write-up: `SEASON_2026_RECAP.md` Finding 9.
 4. **Verify a playoff-day board** end-to-end: pipeline runs → board written →
    grader settles it → era label reads `postseason` in `learning_review_*.md`.
-   Era work is **deployed** (VM HEAD `a89f4fb`, 2026-09-28); only this
+   Era work is **deployed** (VM HEAD `97222a6`, 2026-09-28); only this
    confirmation remains. Time-gated: the Wild Card opens 2026-09-29 and the
    grader timer settles it at 06:00 ET 2026-09-30.
 5. **Pre-register the Finding 8 pitcher-K line rule** before the postseason
