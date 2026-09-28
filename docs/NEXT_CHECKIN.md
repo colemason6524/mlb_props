@@ -207,15 +207,21 @@ n=180**) was computed manually this session because the standing grader reports
    `forecast_board_<date>.json`, not just the learning review, so the artifact is
    self-describing.
 8. **Known production behavior — an off-day run is recorded as `failed`.**
+   **Observed 2026-09-28.**
    `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
    refuses to publish when any required family is empty, and it does **not**
    distinguish *"MLB has no games this date"* from *"the sources returned
-   nothing"*. Evidence: the final regular-season slate, 2026-09-27, exited 1 with
-   `required board family unavailable: pitcher_k=empty, game=empty`
-   (`outputs/run_status.json`, 2026-09-27T20:45:17Z) — the afternoon slot's games
-   had already started. 2026-09-28 has zero games (verified live against
-   `statsapi.mlb.com`), so both of today's slots will record
-   `forecast_board: failed`, and every postseason off day will repeat it.
+   nothing"*. The 2026-09-28 noon slot (zero games) fired at
+   `2026-09-28T16:15:03Z`, exited 1 (`ExecMainStatus=1`), and recorded the
+   identical message to the 2026-09-27 source failure in
+   `outputs/run_status.json` — even though its collectors reported `statuses`
+   both `ok` and simply returned a legitimately empty slate (`row_count: 0`).
+   The 2026-09-27 afternoon failure (`2026-09-27T20:45:17Z`) had games, already
+   started. **The two are indistinguishable in the artifact**, which is why the
+   gate cannot simply be removed. The grader does **not** mirror this:
+   `grade_screen("2026-09-28")` returns `learning={}`, writes no review, and
+   records `success`. Today's afternoon slot (16:45 ET) is expected to repeat the
+   board failure; every postseason off day will too.
    **Decision pending: skip-and-succeed on an empty slate, or keep failing
    closed.** No picks are affected — 2026-09-29's first game is 18:00Z, so the
    noon slot still collects fresh pregame lines. Deliberately not changed without

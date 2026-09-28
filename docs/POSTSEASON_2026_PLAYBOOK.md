@@ -259,9 +259,11 @@ does not publish, that is a **process incident, not a quiet day**:
 - A postseason date with no `forecast_board_*` artifact in `outputs/grades/` is
   a stop-and-look event. Off-days are the only expected gaps, and there is
   exactly one scheduled before the opener (2026-09-28). **Check the slate before
-  calling it an incident:** an off-day currently records `forecast_board: failed`
-  instead of skipping (open item 8), and that is not the same event as a missing
-  board on a day with games.
+  calling it an incident:** an off-day records `forecast_board: failed` instead
+  of skipping (open item 8; observed 2026-09-28), and that is not the same event
+  as a missing board on a day with games — although the two currently produce
+  **identical artifacts and identical `run_status.json` messages**, so the slate
+  is the only way to tell them apart.
 - Any change to which families publish is a **deliberate, announced** change, not
   a side effect of a date check.
 
@@ -308,12 +310,29 @@ does not publish, that is a **process incident, not a quiet day**:
    `outputs/grades/forecast_board_<date>.json`, not just the learning review, so
    the artifact itself is self-describing.
 8. **Known production behavior: an off-day run records as `failed`.**
+   **Observed 2026-09-28, not merely predicted.**
    `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
    fails the publish when any required family is empty and does not separate
-   "no games this date" from "sources returned nothing". On 2026-09-27 the
-   afternoon slot exited 1 with
-   `required board family unavailable: pitcher_k=empty, game=empty`; 2026-09-28
-   has zero games, so both slots today record `forecast_board: failed`, and every
-   postseason off day repeats it. **Decision pending: skip-and-succeed on an
-   empty slate, or keep the fail-closed gate.** No pick impact — 2026-09-29's
-   first game is 18:00Z, so the noon slot still collects fresh pregame lines.
+   "no games this date" from "sources returned nothing".
+   - **Off-day case (observed):** the 2026-09-28 noon slot fired at
+     `2026-09-28T16:15:03Z`, exited 1, and recorded
+     `required board family unavailable: pitcher_k=empty, game=empty`
+     (`outputs/run_status.json`; `ExecMainStatus=1`). Its collectors had
+     **succeeded** — `statuses` read `{"pitcher_k": "ok", "game": "ok"}` with
+     real exports written at `16:15:02Z` / `16:15:03Z` — they correctly returned
+     an empty slate (`sections` empty, `row_count: 0`, `filter_stats` all zero),
+     and the gate read that legitimate emptiness as unavailability.
+   - **Source-failure case:** 2026-09-27's afternoon slot produced the same
+     message and an artifact of the same shape (696 B vs 685 B) on a day that
+     **did** have games — the afternoon games had already started.
+   - The two cases are therefore **indistinguishable in the board artifact and in
+     `run_status.json`**. That is the defect, and it is why the gate cannot simply
+     be deleted: on 09-27 the emptiness really did mean "nothing to publish".
+   - **Grader contrast (observed, non-mutating):** on the same empty 09-28 slate,
+     `grade_screen("2026-09-28")` returns `api_error=False` and `learning={}`
+     (so `main` writes no `learning_review_*` file), settles nothing, and records
+     `forecast_board_grade: success` at exit 0. The pipeline is therefore
+     **asymmetric on an off day: the board fails, the grade succeeds.**
+   **Decision pending: skip-and-succeed on an empty slate, or keep the
+   fail-closed gate.** No pick impact — 2026-09-29's first game is 18:00Z, so the
+   noon slot still collects fresh pregame lines.
