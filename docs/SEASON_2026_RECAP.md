@@ -485,12 +485,15 @@ corroboration of Finding 8 rather than a second look at the same data.
   sub-`.180` projected-K-rate / `<= 3.5`-line region that this table and
   Finding 8 independently identify, and must be priced better than a 0.5560
   breakeven.
-- The always-under baseline above was computed manually this session. The
-  standing grader reported `baseline_rows 0` because `daily_card_summary` reads
-  `history.candidates` and only card rows are resolved by default — the baseline
-  figure was **not** produced by the standing tooling. Repairing that
-  (`resolve_candidates` over the under-candidates from card-bearing snapshots) is
-  an open mechanism item in the playbook, not something this document changed.
+- The always-under baseline above was first computed by hand, because
+  `daily_card_summary` read `history.candidates` while `scripts/grade_daily_card_full_season.py`
+  resolved only card rows — so `baseline_rows` came back `0`. That gap is now
+  **repaired** (2026-09-28): `pitcher_grading.daily_card_baseline` owns the
+  comparison set and the script resolves it alongside the card rows. Re-running
+  the standing tool reproduces this row exactly (**180 rows, 95-85, 52.8%**,
+  zero pending), so the figure above is now tool-produced. The card's own record
+  and every result in this document are unchanged; only the provenance of the
+  baseline row moved.
 
 ---
 

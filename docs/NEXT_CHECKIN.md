@@ -89,7 +89,7 @@ Implementation commits deployed for this work:
 - `9b349b4` — exact input joins and noon/afternoon movement
 - `b7d5167` — separate source market-probability availability from stored-value validation
 
-Validation baseline: 320 tests pass locally (`python3 -m unittest discover -s
+Validation baseline: 321 tests pass locally (`python3 -m unittest discover -s
 tests`, plus focused grader tests on Azure). The Sep 22 VM review found 57 paired
 market snapshots, with 52 same-line probability comparisons. It joined 63/65 rows
 to exact inputs; all 63 available source prices matched. The two unmatched rows
@@ -171,9 +171,11 @@ displayed at full confidence for a single reader.
 3. ~~Resolve the pre-registered Daily Unders Card gate.~~ **DONE 2026-09-28.**
    `scripts/consolidate_history.py` (201 manifest dates, 68 pitcher dates) then
    `scripts/grade_daily_card_full_season.py` → **38–40, 48.7%, n=78**, below the
-   pre-registered `< 52.4%` kill line. The always-under baseline (**52.8%,
-n=180**) was computed manually this session because the standing grader reports
-   `baseline_rows 0`; see Finding 9 and the new playbook open item.
+   pre-registered `< 52.4%` kill line, against an always-under baseline of
+   **180 rows, 95–85, 52.8%**. That baseline was first hand-computed because the
+   standing grader reported `baseline_rows 0`; the gap is closed as of
+   2026-09-28 (playbook Open item 6) and the tool now reproduces the row with
+   0 pending. See Finding 9.
 4. ~~Commit and deploy the era work.~~ **DONE 2026-09-28.** Pushed and
    fast-forwarded onto the VM; confirm with `git rev-parse --short HEAD` **on the
    VM** rather than trusting a hash written here. Commits of record: `a9f1ade`

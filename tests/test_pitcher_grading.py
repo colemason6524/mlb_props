@@ -13,6 +13,7 @@ from mlb_props.pitcher_grading import (
     _l5_band,
     active_vs_shadow_metrics,
     brier_and_calibration,
+    daily_card_baseline,
     daily_card_summary,
     disagreement_analysis,
     load_history,
@@ -780,6 +781,61 @@ class DailyCardGradingTests(unittest.TestCase):
             self.assertGreater(summary["baseline_rows"], 0)
             self.assertIsNotNone(summary["baseline_hit_rate"])
             self.assertEqual(summary["policy_version"], "daily-unders-card-v1")
+
+    def test_baseline_rows_are_resolved_separately_from_card_rows(self) -> None:
+        """The always-under baseline needs its own resolve pass.
+
+        Card rows live in history.daily_card and baseline rows live in
+        history.candidates, so resolving the card does not resolve the baseline
+        and the summary reports baseline_rows 0 for mechanical reasons. This is
+        the path scripts/grade_daily_card_full_season.py walks.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            _write_history(tmp, self._schema8_payload())
+            history = load_history(tmp, 8)
+
+            baseline = daily_card_baseline(history)
+            self.assertTrue(baseline)
+            card_file_names = {row.file_name for row in history.daily_card}
+            self.assertTrue(
+                all(row.file_name in card_file_names for row in baseline)
+            )
+            self.assertTrue(all(row.side == "UNDER" for row in baseline))
+            self.assertFalse({id(row) for row in history.daily_card} & {id(row) for row in baseline})
+            self.assertTrue(all(row.outcome == "pending" for row in baseline))
+
+            # Unresolved baseline: the summary can only report zero rows.
+            self.assertEqual(daily_card_summary(history)["baseline_rows"], 0)
+
+            client = FakeClient(
+                logs={
+                    row.subject_id: [
+                        {
+                            "game_date": "2026-08-05",
+                            "game_pk": 900100,
+                            "team": "TB",
+                            "opponent": "TOR",
+                            "did_start": True,
+                            "strikeouts": 3,
+                            "outs": 15,
+                            "pitches": 88,
+                            "batters_faced": 22,
+                            "walks": 1,
+                            "hits": 4,
+                            "er": 1,
+                        }
+                    ]
+                    for row in baseline
+                }
+            )
+            resolve_candidates(baseline, client, today=date(2026, 8, 6))
+            self.assertTrue(all(row.outcome in ("win", "loss") for row in baseline))
+
+            summary = daily_card_summary(history)
+            self.assertEqual(summary["baseline_rows"], 1)
+            self.assertEqual(summary["baseline_pending"], 0)
+            self.assertEqual(summary["baseline_hit_rate"], 1.0)
 
     def test_daily_card_summary_empty_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

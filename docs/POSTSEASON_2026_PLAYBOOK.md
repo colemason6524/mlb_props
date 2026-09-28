@@ -298,14 +298,20 @@ does not publish, that is a **process incident, not a quiet day**:
    (29.8%)**. Finding 9 is independent corroboration — the Daily Card lost by
    routing half its volume into exactly that bucket. Declare it now so it is a
    test rather than a reaction.
-6. **Repair the always-under baseline in the standing tooling.**
-   `pitcher_grading.daily_card_summary` reports `baseline_rows 0` because it
-   reads `history.candidates` while `scripts/grade_daily_card_full_season.py`
-   resolves only card rows. The pre-registered rule explicitly asks whether the
-   card beats simply taking unders, so the baseline must be produced by the same
-   tool that reports the verdict — resolve the under-candidates from card-bearing
-   snapshots before summarizing. (The 52.8% / n=180 figure above was computed by
-   hand this session.) Independent of any v2 decision.
+6. ~~Repair the always-under baseline in the standing tooling.~~ **DONE
+   2026-09-28.** `pitcher_grading.daily_card_summary` reported `baseline_rows 0`
+   because it read `history.candidates` while
+   `scripts/grade_daily_card_full_season.py` resolved only card rows. Those are
+   two different sets of objects, so every baseline row stayed `pending` and the
+   comparison the pre-registered rule actually asks for was never produced. The
+   comparison set now lives in one place, `pitcher_grading.daily_card_baseline`;
+   the summary derives its baseline from it, and the script resolves that list
+   alongside the card rows. Re-running the tool reports **180 baseline rows,
+   52.78% (95–85), 0 pending**, reproducing the hand figure exactly with the
+   card's own numbers unchanged (38–40, 48.7%, n=78). A `baseline_pending` key
+   makes a zero baseline self-explaining instead of silent, and
+   `tests/test_pitcher_grading.py` pins the two-set resolution step. Independent
+   of any v2 decision.
 7. **Optional, not yet done:** stamp `era` into the `grade_screen` result dict in
    `outputs/grades/forecast_board_<date>.json`, not just the learning review, so
    the artifact itself is self-describing.

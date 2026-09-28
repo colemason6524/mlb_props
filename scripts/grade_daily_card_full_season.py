@@ -25,6 +25,11 @@ def main() -> int:
     print(f"Card rows loaded: {len(card)}; policy {history.daily_card_policy_version}")
     client = PG.MlbGradingClient()
     PG.resolve_candidates(card, client)
+    # The pre-registered rule compares the card against simply taking every
+    # under on the same snapshots. Those baseline rows live in
+    # history.candidates, not in history.daily_card, so resolving the card alone
+    # leaves them pending and daily_card_summary reports baseline_rows 0.
+    PG.resolve_candidates(PG.daily_card_baseline(history), client)
     summary = PG.daily_card_summary(history)
 
     pending = [row for row in card if row.outcome == "pending"]

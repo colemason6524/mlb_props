@@ -1013,29 +1013,48 @@ def priced_card_units(card_rows: list[GradedCandidate]) -> dict:
     }
 
 
+def daily_card_baseline(history: GradedHistory) -> list[GradedCandidate]:
+    """Every UNDER-side candidate from a snapshot that carried a Daily Card.
+
+    This is the comparison set for the pre-registered success rule, which asks
+    whether the card's segment gates beat simply taking unders on the same
+    snapshots. Rows come back exactly as loaded, so a freshly loaded history
+    still reads ``outcome == "pending"`` here.
+
+    The card rows and the baseline rows are separate objects: card rows live in
+    ``history.daily_card``, the baseline lives in ``history.candidates``.
+    ``resolve_candidates`` mutates the objects it is handed, so a caller that
+    grades a card must resolve this list as well as the card, or
+    ``daily_card_summary`` reports ``baseline_rows 0`` for purely mechanical
+    reasons.
+    """
+    card_file_names = {row.file_name for row in history.daily_card}
+    return [
+        row
+        for row in history.candidates
+        if row.side == "UNDER" and row.file_name in card_file_names
+    ]
+
+
 def daily_card_summary(history: GradedHistory) -> dict:
     """Summarize graded Daily Card rows against the always-under candidate baseline.
 
-    The card rows must already be resolved (outcome set by resolve_candidates).
-    The baseline is every resolved UNDER-side candidate from the same snapshots,
-    regardless of line or edge, because the pre-registered success rule asks
-    whether the card's segment gates beat simply taking unders. Priced units
-    use each row's collected under price (the standing P&L convention);
-    units_at_minus_110 is retained as the pre-registered rule's historical
-    basis.
+    The card rows and the baseline rows must both already be resolved (outcome
+    set by resolve_candidates). The baseline is every resolved UNDER-side
+    candidate from the same snapshots, regardless of line or edge, because the
+    pre-registered success rule asks whether the card's segment gates beat
+    simply taking unders. Priced units use each row's collected under price (the
+    standing P&L convention); units_at_minus_110 is retained as the
+    pre-registered rule's historical basis.
     """
     card_rows = history.daily_card
     graded = [row for row in card_rows if row.outcome in ("win", "loss")]
     wins = sum(1 for row in graded if row.outcome == "win")
     losses = len(graded) - wins
 
-    card_file_names = {row.file_name for row in card_rows}
+    baseline_candidates = daily_card_baseline(history)
     baseline_rows = [
-        row
-        for row in history.candidates
-        if row.side == "UNDER"
-        and row.file_name in card_file_names
-        and row.outcome in ("win", "loss")
+        row for row in baseline_candidates if row.outcome in ("win", "loss")
     ]
     baseline_wins = sum(1 for row in baseline_rows if row.outcome == "win")
 
@@ -1057,6 +1076,12 @@ def daily_card_summary(history: GradedHistory) -> dict:
         **priced_card_units(card_rows),
         "baseline_rows": len(baseline_rows),
         "baseline_hit_rate": (baseline_wins / len(baseline_rows)) if baseline_rows else None,
+        # Non-zero alongside a graded card means the baseline candidates were
+        # never resolved, so a zero `baseline_rows` is a tooling gap rather than
+        # an absence of unders on those snapshots.
+        "baseline_pending": sum(
+            1 for row in baseline_candidates if row.outcome == "pending"
+        ),
         "policy_version": str(
             getattr(history, "daily_card_policy_version", "") or "unknown"
         ),
