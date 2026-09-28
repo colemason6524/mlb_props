@@ -38,6 +38,16 @@ the file was first frozen. Finding 9 changes no other number in this file; it
 adds the card's verdict and the always-under baseline the verdict is measured
 against.
 
+A third revision on the same day corrected **labels, not results**. The matchup
+table below previously named its buckets after the screener's
+`GOOD_MATCHUP`/`TOUGH_MATCHUP` badges, but the counts were computed from the
+**±0.15** cut, and the badges fire at ±0.2. The bucket names now state the
+boundaries they were actually computed from. All three `n`, all three hit rates,
+and all three unit totals are byte-identical to the first freeze. This is
+recorded because the ±0.15 / ±0.2 distinction is the whole basis of the
+postseason `line ≤ 3.5` rule, and a label that implies the wrong cut would make
+that rule look arbitrary.
+
 ---
 
 ## The window
@@ -389,9 +399,19 @@ signal.
 
 | matchup_rating | n | W-L | hit | units |
 |---|---:|---:|---:|---:|
-| negative (TOUGH_MATCHUP) | 86 | 34–52 | **39.5%** | **−23.68** |
-| flat | 79 | 35–44 | 44.3% | −15.65 |
-| positive (free-swinging) | 34 | 19–15 | **55.9%** | **+0.78** |
+| `< −0.15` | 86 | 34–52 | **39.5%** | **−23.68** |
+| `−0.15 … +0.15` (flat) | 79 | 35–44 | 44.3% | −15.65 |
+| `≥ +0.15` | 34 | 19–15 | **55.9%** | **+0.78** |
+
+`matchup_rating` is the screener's K-vs-hand rating (`mlb_props/screener.py`,
+`_matchup_rating`: centred on a .22 opposing K rate against the pitcher's hand,
+rounded to 2 dp). The bucket boundaries are stated with the table because the
+cut lives or dies on them, and they are **±0.15** — the `GOOD_MATCHUP` /
+`TOUGH_MATCHUP` flag badges are set at **±0.2** and select a different, smaller
+set (28 and 71 rows), which is why the flags do not reproduce this table and why
+they are not the trigger in the postseason rule. Buckets were derived from the
+frozen research table (`evidence/research/research_table.json`); the counts here
+reproduce exactly (`< −0.15` and `≥ +0.15` inclusive/exclusive as written).
 
 | opponent K rate vs hand | n | W-L | hit | units |
 |---|---:|---:|---:|---:|

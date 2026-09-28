@@ -3,8 +3,9 @@
 Runs the pitcher collection, then the game-market collection, then the board
 runner on exactly the exports produced by this invocation. A collection stage
 that fails or produces no new export stops the pipeline, so the board can never
-publish from stale inputs. The whole pipeline runs under the shared task lock
-held by scripts/run_linux_task.sh.
+publish from stale inputs. A date with no games scheduled is the one deliberate
+skip: the board marks the artifact and the pipeline treats it as a pass. The
+whole pipeline runs under the shared task lock held by scripts/run_linux_task.sh.
 
 Usage:
   python3 run_forecast_pipeline.py --slot noon --send-discord
@@ -13,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -26,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 from mlb_props.config import OUTPUTS_DIR
 
 HISTORY_DIR = OUTPUTS_DIR / "history"
+BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
 MAX_EXPORT_AGE_MINUTES = 10
 PITCHER_SCRIPT = ROOT / "run_nightly.py"
 MARKETS_SCRIPT = ROOT / "run_game_markets.py"
@@ -66,6 +69,25 @@ def newest_export(pattern: str, since: float, before: set[Path] | None = None) -
 
 def _run_stage(command: list[str], env: dict[str, str], runner, cwd: Path = ROOT):
     return runner(command, env=env, cwd=str(cwd))
+
+
+def board_skip_reason(screen: str, slot: str, since: float) -> str | None:
+    """The board's own skip marker for this run, when it deliberately published nothing.
+
+    The marker only counts when the board artifact was rewritten by this run, so
+    a skip from an earlier run of the same date and slot cannot be re-reported.
+    The mtime grace mirrors newest_export, which dodges coarse timestamp
+    precision without trusting an old file.
+    """
+    path = BOARD_DIR / f"forecast_board_{screen}_{slot}.json"
+    try:
+        if path.stat().st_mtime < since - 2.0:
+            return None
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    reason = payload.get("skip_reason")
+    return str(reason) if reason else None
 
 
 def run_pipeline(
@@ -139,6 +161,12 @@ def run_pipeline(
 
     print(f"[pipeline] stage=board inputs={pitcher_export.name},{markets_export.name}")
     board_proc = _run_stage(board_cmd, base_env, runner)
+    if board_proc.returncode == 0:
+        skip_reason = board_skip_reason(screen, slot, start_ts)
+        if skip_reason:
+            # No games scheduled: the board published nothing on purpose, and
+            # an empty slate is a pass rather than a gap in the record.
+            print(f"[pipeline] board skipped ({skip_reason}); nothing published")
     return board_proc.returncode
 
 

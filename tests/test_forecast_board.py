@@ -17,11 +17,13 @@ from run_forecast_board import (
     expected_value,
     export_age_minutes,
     filter_rows_by_start,
+    only_empty_families,
     parse_utc,
     prune_old_files,
     record_delivery,
     render_board_text,
     required_family_errors,
+    scheduled_game_count,
     start_times_from_pitcher_export,
 )
 
@@ -192,6 +194,95 @@ class EmptyBoardTests(unittest.TestCase):
 
         code = board.main(["--date", "2999-01-01", "--run-id", "test-empty-board", "--skip-games"])
         self.assertEqual(code, 1)
+
+
+class OffDaySkipTests(unittest.TestCase):
+    """An empty slate is a deliberate skip; only real source failures fail closed."""
+
+    def test_only_empty_families_separates_empty_from_unavailable(self) -> None:
+        self.assertFalse(only_empty_families([]))
+        self.assertTrue(only_empty_families(["pitcher_k=empty", "game=empty"]))
+        self.assertFalse(only_empty_families(["pitcher_k=no_export", "game=empty"]))
+        self.assertFalse(only_empty_families(["pitcher_k=empty", "game=stale_export:12.0"]))
+
+    def test_scheduled_game_count_is_none_when_the_schedule_is_unreadable(self) -> None:
+        from mlb_props.forecasting import game_data
+        import run_forecast_board as board
+
+        slate = [{"gamePk": 1}, {"gamePk": 2}]
+        with mock.patch.object(game_data, "fetch_slate", return_value=slate):
+            self.assertEqual(scheduled_game_count("2026-09-11"), 2)
+        with mock.patch.object(game_data, "fetch_slate", return_value=[]):
+            self.assertEqual(scheduled_game_count("2026-09-28"), 0)
+        with mock.patch.object(game_data, "fetch_slate", side_effect=RuntimeError("offline")):
+            self.assertIsNone(scheduled_game_count("2026-09-28"))
+
+    def _run_board(self, scheduled: int | None, family_errors: list[str], run_id: str, slot: str = "noon"):
+        import run_forecast_board as board
+
+        with mock.patch.object(board, "required_family_errors", return_value=family_errors), \
+                mock.patch.object(board, "scheduled_game_count", return_value=scheduled), \
+                mock.patch.object(board, "append_jsonl") as appended, \
+                mock.patch.object(board, "send_discord_message") as sent, \
+                mock.patch.object(board, "record_run") as recorded:
+            code = board.main(
+                [
+                    "--date", "2999-01-01",
+                    "--slot", slot,
+                    "--skip-games",
+                    "--send-discord",
+                    "--run-id", run_id,
+                ]
+            )
+        return code, recorded, appended, sent
+
+    def test_off_day_skips_and_succeeds_without_publishing(self) -> None:
+        import run_forecast_board as board
+
+        code, recorded, appended, sent = self._run_board(
+            0, ["pitcher_k=empty", "game=empty"], "test-off-day-skip"
+        )
+        self.assertEqual(code, 0)
+        kwargs = recorded.call_args.kwargs
+        self.assertEqual(kwargs["outcome"], "skipped")
+        self.assertEqual(kwargs["task"], "forecast_board")
+        self.assertIn("no games scheduled", kwargs["message"])
+        appended.assert_not_called()
+        sent.assert_not_called()
+        payload = json.loads(
+            (board.BOARD_DIR / "forecast_board_2999-01-01_noon.json").read_text()
+        )
+        self.assertEqual(payload["skip_reason"], "no_slate")
+        self.assertEqual(payload["row_count"], 0)
+
+    def test_scheduled_games_with_empty_families_still_fail_closed(self) -> None:
+        code, recorded, appended, sent = self._run_board(
+            7, ["pitcher_k=empty", "game=empty"], "test-slate-empty-fail"
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "failed")
+        appended.assert_not_called()
+        sent.assert_not_called()
+
+    def test_unreadable_schedule_still_fails_closed(self) -> None:
+        code, recorded, _, _ = self._run_board(
+            None, ["pitcher_k=empty", "game=empty"], "test-schedule-unknown"
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "failed")
+
+    def test_status_failure_never_reaches_the_schedule_lookup(self) -> None:
+        import run_forecast_board as board
+
+        with mock.patch.object(board, "scheduled_game_count") as lookup, \
+                mock.patch.object(board, "append_jsonl"), \
+                mock.patch.object(board, "record_run") as recorded:
+            code = board.main(
+                ["--date", "2999-01-01", "--run-id", "test-source-failure", "--skip-games"]
+            )
+        self.assertEqual(code, 1)
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "failed")
+        lookup.assert_not_called()
 
 
 class SlotTests(unittest.TestCase):

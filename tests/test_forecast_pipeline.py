@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
@@ -45,9 +46,10 @@ class NewestExportTests(unittest.TestCase):
 
 
 class _FakeRunner:
-    def __init__(self, fail_stage: str | None = None, write_exports: bool = True):
+    def __init__(self, fail_stage: str | None = None, write_exports: bool = True, board_skip_reason: str | None = None):
         self.fail_stage = fail_stage
         self.write_exports = write_exports
+        self.board_skip_reason = board_skip_reason
         self.commands: list[list[str]] = []
         self.counter = 0
 
@@ -62,7 +64,52 @@ class _FakeRunner:
                 (pipeline.HISTORY_DIR / f"pitcher_props_{self.counter}.json").write_text("{}")
             elif script == "run_game_markets.py":
                 (pipeline.HISTORY_DIR / f"game_markets_{self.counter}.json").write_text("{}")
+            elif script == "run_forecast_board.py" and self.board_skip_reason is not None:
+                screen = command[command.index("--date") + 1]
+                slot = command[command.index("--slot") + 1]
+                pipeline.BOARD_DIR.mkdir(parents=True, exist_ok=True)
+                payload = {"skip_reason": self.board_skip_reason, "row_count": 0}
+                (pipeline.BOARD_DIR / f"forecast_board_{screen}_{slot}.json").write_text(
+                    json.dumps(payload)
+                )
         return SimpleNamespace(returncode=0)
+
+
+class BoardSkipReasonTests(unittest.TestCase):
+    def _patched(self, root: Path):
+        return mock.patch.object(pipeline, "BOARD_DIR", root)
+
+    def test_missing_board_file_has_no_skip_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._patched(Path(tmp)):
+                self.assertIsNone(pipeline.board_skip_reason("2026-09-28", "noon", time.time()))
+
+    def test_board_without_marker_has_no_skip_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "forecast_board_2026-09-28_noon.json").write_text(json.dumps({"row_count": 4}))
+            with self._patched(root):
+                self.assertIsNone(pipeline.board_skip_reason("2026-09-28", "noon", time.time() - 30))
+
+    def test_board_with_marker_reports_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "forecast_board_2026-09-28_noon.json").write_text(
+                json.dumps({"skip_reason": "no_slate", "row_count": 0})
+            )
+            with self._patched(root):
+                self.assertEqual(
+                    pipeline.board_skip_reason("2026-09-28", "noon", time.time() - 30), "no_slate"
+                )
+
+    def test_marker_from_an_earlier_run_is_not_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_board_2026-09-28_noon.json"
+            path.write_text(json.dumps({"skip_reason": "no_slate"}))
+            os.utime(path, (time.time() - 600, time.time() - 600))
+            with self._patched(root):
+                self.assertIsNone(pipeline.board_skip_reason("2026-09-28", "noon", time.time()))
 
 
 class RunPipelineTests(unittest.TestCase):
@@ -134,6 +181,21 @@ class RunPipelineTests(unittest.TestCase):
                     slot="noon", screen="2026-09-11", send_discord=True, runner=runner
                 )
             self.assertEqual(code, 1)
+
+    def test_off_day_board_skip_is_a_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            boards = root / "boards"
+            boards.mkdir()
+            runner = _FakeRunner(board_skip_reason="no_slate")
+            with self._patched(root), mock.patch.object(pipeline, "BOARD_DIR", boards):
+                code = pipeline.run_pipeline(
+                    slot="noon", screen="2026-09-28", send_discord=True, runner=runner
+                )
+            self.assertEqual(code, 0)
+            # Collection still ran; the board reached the skip, not a failure.
+            self.assertEqual(len(runner.commands), 3)
+            self.assertEqual(Path(runner.commands[-1][1]).name, "run_forecast_board.py")
 
     def test_python_and_screen_propagate_to_board(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

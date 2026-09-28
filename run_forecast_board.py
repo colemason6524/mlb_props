@@ -48,6 +48,7 @@ HISTORY_RETENTION_DAYS = 400
 BOARD_RETENTION_DAYS = 45
 CACHE_RETENTION_DAYS = 400
 DISCORD_CHUNK_LIMIT = 1900
+NO_SLATE = "no_slate"
 START_BUFFER_MINUTES = 10
 SLOT_LABELS = {"noon": "Noon Board", "afternoon": "Afternoon Update"}
 
@@ -695,6 +696,30 @@ def required_family_errors(statuses: dict[str, str], sections: dict[str, list[di
     return errors
 
 
+def only_empty_families(family_errors: list[str]) -> bool:
+    """True when every required family is merely empty.
+
+    Empty is what an off day looks like, and it is also what a silent source
+    failure looks like inside the exports alone. Only the schedule separates
+    them, so this is a precondition for asking it -- never a verdict.
+    """
+    return bool(family_errors) and all(error.endswith("=empty") for error in family_errors)
+
+
+def scheduled_game_count(screen: str) -> int | None:
+    """How many games MLB schedules for the screen date.
+
+    Returns None when the schedule cannot be read. None is not zero: an
+    unreachable schedule must keep the board failing closed rather than let a
+    real slate be skipped as an off day.
+    """
+    try:
+        return len(game_data.fetch_slate(screen))
+    except Exception as exc:
+        print(f"schedule lookup failed for {screen}: {type(exc).__name__}: {exc}")
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     pruned = prune_runtime_files()
@@ -807,11 +832,25 @@ def main(argv: list[str] | None = None) -> int:
         "sections": sections,
         "row_count": len(banner_rows),
     }
+    # An off day returns every family empty. That is also what a source failure
+    # returns, so ask the schedule which one this is before deciding: zero
+    # scheduled games is a deliberate skip, anything else still fails closed.
+    family_errors = required_family_errors(statuses, sections)
+    scheduled = scheduled_game_count(screen) if only_empty_families(family_errors) else None
+    skip_reason = NO_SLATE if scheduled == 0 else None
+    if skip_reason:
+        board["skip_reason"] = skip_reason
+
     BOARD_DIR.mkdir(parents=True, exist_ok=True)
     board_path = BOARD_DIR / board_filename(screen, slot)
     board_path.write_text(json.dumps(board, indent=1, default=str))
 
-    family_errors = required_family_errors(statuses, sections)
+    if skip_reason:
+        message = f"no games scheduled for {screen}; board skipped ({', '.join(family_errors)})"
+        print(f"SKIP: {message}")
+        record_run(outcome="skipped", task="forecast_board", message=message, screen_date=screen)
+        return 0
+
     if family_errors:
         message = f"required board family unavailable: {', '.join(family_errors)}"
         print(f"ERROR: {message}; refusing to publish")

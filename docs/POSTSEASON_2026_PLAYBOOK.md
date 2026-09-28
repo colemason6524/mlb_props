@@ -66,9 +66,12 @@ Two consequences:
 - **Matchup structure.** Opposing-lineup K% vs hand, whiff and contact rates,
   platoon splits, park and umpire context. This is the evidence the user named
   first, and the full-window recap backs it **directly**: `matchup_rating`
-  (positive 55.9% / +0.78u · flat 44.3% / −15.65u · negative 39.5% / −23.68u) and
-  `opponent_k_rate_vs_hand` (≥.230 → 52.7% · .190–.230 → 43.0% · <.190 → 33.3%)
-  are the only monotone, favorably-signed separator classes in the entire study.
+  `≥ +0.15` → 55.9% / +0.78u (n=34) · `−0.15 … +0.15` → 44.3% / −15.65u (n=79) ·
+  `< −0.15` → 39.5% / −23.68u (n=86) and `opponent_k_rate_vs_hand`
+  (≥.230 → 52.7% · .190–.230 → 43.0% · <.190 → 33.3%) are the only monotone,
+  favorably-signed separator classes in the entire study. **State the boundary
+  with the number** — the `GOOD_MATCHUP`/`TOUGH_MATCHUP` flag badges sit at ±0.2
+  and select a different (smaller) set than the ±0.15 cut quoted here.
   **Lean on the matchup variables, not the flag badges:** the boolean flags
   (PARK_PITCHER, FREE_SWING_OPP, MATCHUP_K_PLUS, DEPTH_PLUS, EDGE_EXTREME) do not
   separate at any usable significance on the full window — every flag's q ≥ 0.68.
@@ -258,12 +261,13 @@ does not publish, that is a **process incident, not a quiet day**:
   keep firing. `sports-mlb-grade-board.timer` (06:00 ET) keeps grading.
 - A postseason date with no `forecast_board_*` artifact in `outputs/grades/` is
   a stop-and-look event. Off-days are the only expected gaps, and there is
-  exactly one scheduled before the opener (2026-09-28). **Check the slate before
-  calling it an incident:** an off-day records `forecast_board: failed` instead
-  of skipping (open item 8; observed 2026-09-28), and that is not the same event
-  as a missing board on a day with games — although the two currently produce
-  **identical artifacts and identical `run_status.json` messages**, so the slate
-  is the only way to tell them apart.
+  exactly one scheduled before the opener (2026-09-28). **As of 2026-09-28 the
+  board tells the two cases apart by itself** (item 8, shipped): a date with **no
+  scheduled games skips and succeeds** — exit 0, `forecast_board: skipped`,
+  `skip_reason: "no_slate"` in the artifact, no ledger row, no Discord post —
+  while a date **with** games whose sources return nothing **still fails
+  closed**. So a `failed` on a game day is now unambiguously a source incident,
+  and a silent gap on a game day is still the thing to go looking for.
 - Any change to which families publish is a **deliberate, announced** change, not
   a side effect of a date check.
 
@@ -292,12 +296,49 @@ does not publish, that is a **process incident, not a quiet day**:
    era line because it was graded before the deployment — the first era-labeled
    production review is the one covering the first graded postseason slate. See
    `NEXT_CHECKIN.md` item 4 for the non-mutating proof on the real 09-27 rows.
-5. **Pre-register the Finding 8 pitcher-K line rule** before the postseason
-   starts: *`line ≤ 3.5` K plays excluded, or require an explicit favorable
-   `matchup_rating` override.* Baseline it must beat: **−25.56u on 57 plays
-   (29.8%)**. Finding 9 is independent corroboration — the Daily Card lost by
-   routing half its volume into exactly that bucket. Declare it now so it is a
-   test rather than a reaction.
+5. ~~Pre-register the Finding 8 pitcher-K line rule before the postseason
+   starts.~~ **DONE 2026-09-28 — pre-registered and dated 2026-09-28, before the
+   2026-09-29 Wild Card opener.**
+
+   **Rule `postseason-k-line-rule-v1` (declared 2026-09-28).** A pitcher-K play
+   whose market line is **≤ 3.5 is excluded unless the row carries an explicit
+   favorable matchup rating**, defined here as **`matchup_rating ≥ +0.15`** — the
+   boundary is named because it decides which rows qualify, and it is the cut the
+   recap's matchup table actually uses. The `GOOD_MATCHUP` /`TOUGH_MATCHUP`
+   badges are set at ±0.2 (`mlb_props/screener.py:634`) and are **not** the
+   trigger; they are also weak on their own (every flag q ≥ 0.68). The override
+   is an **allowance, not a re-weighting**: a qualifying play publishes at normal
+   full confidence with the matchup read as its stated basis. It is not a staking
+   policy — the Daily Unders Card is retired (item 3).
+
+   **Baseline it must beat:** every `line ≤ 3.5` pitcher-K play in the frozen
+   regular-season window is **17–40 (29.8%), −25.56u on 57 plays** — 29% of the
+   family's volume and 66% of its −38.55u. `projected_k_rate < .180` is the same
+   population seen from the model's side (33.9%, −21.79u on 56). Finding 9 is
+   independent corroboration: the Daily Card lost by routing volume into this
+   bucket.
+
+   **Why the override is an allowance and not a re-weighting — the honest
+   version.** The family-level matchup split is the study's only monotone,
+   favorably-signed separator class: `matchup_rating ≥ +0.15` → **55.9%,
+   +0.78u on 34**; `−0.15 … +0.15` → 44.3%, −15.65u on 79; `< −0.15` → **39.5%,
+   −23.68u on 86**. Inside the `≤ 3.5` bucket the same cut points the same way
+   but is **much thinner**: favorable **9 plays, 4–5, 44.4%, −2.02u**; flat
+   **17, 7–10, 41.2%, −3.64u**; unfavorable **31, 6–25, 19.4%, −19.90u**. So the
+   rule is justified mainly as a **filter**: it removes the single worst bucket
+   in the study (unfavorable `≤ 3.5` at 19.4%) and keeps nine plays whose own
+   record is still below breakeven at −110. The override rests on the
+   family-level matchup evidence plus the user's judgment, **not** on a
+   profitable `≤ 3.5` subset. Do not read this later as a claim that the nine
+   plays were a proven edge — they were not.
+
+   **Evaluation (declared now).** Recomputed on era-filtered postseason
+   `line ≤ 3.5` pitcher-K plays only. **State n before any rate** (Rule 2);
+   below **n=25** the verdict is *"insufficient evidence"*, and for a short
+   playoff run that is the expected outcome rather than a failure.
+
+   **Kill condition.** If favorable-matchup `≤ 3.5` plays run below the ~52.4%
+   breakeven at −110 once n ≥ 25, drop the override and exclude the bucket.
 6. ~~Repair the always-under baseline in the standing tooling.~~ **DONE
    2026-09-28.** `pitcher_grading.daily_card_summary` reported `baseline_rows 0`
    because it read `history.candidates` while
@@ -315,30 +356,45 @@ does not publish, that is a **process incident, not a quiet day**:
 7. **Optional, not yet done:** stamp `era` into the `grade_screen` result dict in
    `outputs/grades/forecast_board_<date>.json`, not just the learning review, so
    the artifact itself is self-describing.
-8. **Known production behavior: an off-day run records as `failed`.**
-   **Observed 2026-09-28, not merely predicted.**
-   `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
-   fails the publish when any required family is empty and does not separate
-   "no games this date" from "sources returned nothing".
-   - **Off-day case (observed):** the 2026-09-28 noon slot fired at
-     `2026-09-28T16:15:03Z`, exited 1, and recorded
-     `required board family unavailable: pitcher_k=empty, game=empty`
-     (`outputs/run_status.json`; `ExecMainStatus=1`). Its collectors had
-     **succeeded** — `statuses` read `{"pitcher_k": "ok", "game": "ok"}` with
-     real exports written at `16:15:02Z` / `16:15:03Z` — they correctly returned
-     an empty slate (`sections` empty, `row_count: 0`, `filter_stats` all zero),
-     and the gate read that legitimate emptiness as unavailability.
-   - **Source-failure case:** 2026-09-27's afternoon slot produced the same
-     message and an artifact of the same shape (696 B vs 685 B) on a day that
-     **did** have games — the afternoon games had already started.
-   - The two cases are therefore **indistinguishable in the board artifact and in
-     `run_status.json`**. That is the defect, and it is why the gate cannot simply
-     be deleted: on 09-27 the emptiness really did mean "nothing to publish".
-   - **Grader contrast (observed, non-mutating):** on the same empty 09-28 slate,
-     `grade_screen("2026-09-28")` returns `api_error=False` and `learning={}`
-     (so `main` writes no `learning_review_*` file), settles nothing, and records
-     `forecast_board_grade: success` at exit 0. The pipeline is therefore
-     **asymmetric on an off day: the board fails, the grade succeeds.**
-   **Decision pending: skip-and-succeed on an empty slate, or keep the
-   fail-closed gate.** No pick impact — 2026-09-29's first game is 18:00Z, so the
-   noon slot still collects fresh pregame lines.
+8. ~~Known production behavior: an off-day run records as `failed`.~~
+   **RESOLVED 2026-09-28 — the board now skips and succeeds on an empty slate
+   (decision: skip-and-succeed; keep failing closed when games exist).**
+
+   The observation is kept because it is why the fix looks the way it does.
+   `run_forecast_board.required_family_errors` failed the publish whenever a
+   required family was empty and did **not** separate "no games this date" from
+   "sources returned nothing". The 2026-09-28 noon slot (zero games) fired
+   `2026-09-28T16:15:03Z`, exited 1, and recorded
+   `required board family unavailable: pitcher_k=empty, game=empty` while its
+   collectors reported `statuses` both `ok` and wrote real exports at
+   `16:15:02Z` / `16:15:03Z`. The 2026-09-27 afternoon slot (a day that **did**
+   have games, already started, `2026-09-27T20:45:17Z`) produced the identical
+   message and a near-identical artifact (696 B vs 685 B) — the two cases were
+   indistinguishable in the artifact and in `run_status.json`, which is why the
+   gate could not simply be deleted. The grader was already asymmetric on the
+   off day: `grade_screen("2026-09-28")` returned `api_error=False`,
+   `learning={}`, wrote no review, settled nothing, and recorded `success`.
+
+   **Mechanism (shipped).** `run_forecast_board.py` gained
+   `scheduled_game_count()` — which wraps
+   `mlb_props.forecasting.game_data.fetch_slate` and returns `None` when the
+   schedule cannot be read, so an unreachable schedule **still fails closed** —
+   and `only_empty_families()`. The publish gate is now *decide → write the board
+   once → skip or fail*: the skip path returns 0 **before** the ledger append and
+   before the Discord block, and writes `board["skip_reason"] = "no_slate"`.
+   `run_forecast_pipeline.py` reads that back through
+   `board_skip_reason(screen, slot, since)`, which counts a marker only when its
+   mtime falls inside the stage's own `since` window — the same grace
+   `newest_export` uses, so a stale marker cannot be re-reported. The board stage
+   then prints `board skipped (<reason>); nothing published` and still returns
+   the board's exit code.
+
+   **Evidence the discriminator is real** (live `statsapi` schedule, checked
+   2026-09-28): `2026-09-27 → 15` games (source-failure day: still fails
+   closed), `2026-09-28 → 0` (off day: skip and succeed), `2026-09-29 → 4`
+   (opener: real board). Tests: `tests/test_forecast_board.OffDaySkipTests` (6
+   cases, including empty-vs-unavailable, unreadable schedule, and
+   scheduled-games-with-empty-families) and
+   `tests/test_forecast_pipeline.BoardSkipReasonTests` (4, including
+   stale-marker rejection) plus `test_off_day_board_skip_is_a_pass`. Full suite
+   green (`332 tests, OK`) at commit time.

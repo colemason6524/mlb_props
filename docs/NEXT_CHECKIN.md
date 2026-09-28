@@ -29,8 +29,9 @@ confidence rather than adopting a cautious shadow posture.**
 - **Windows:** retired. Windows Task Scheduler instructions in older docs are
   archive material only.
 - **Current verified deployed implementation:** Mac and VM are at the same HEAD
-  as of 2026-09-28 (era-labeling work, the season recap and postseason playbook,
-  and their documentation corrections). Always verify `git log --oneline -3` and
+  as of 2026-09-28 — era labeling, the season recap and postseason playbook,
+  their documentation corrections, the always-under baseline repair, and the
+  off-day skip-and-succeed board gate. Always verify `git log --oneline -3` and
   `git status` on both machines before work; do not trust a hash copied into a
   document.
 - **Pre-existing work to preserve:** on the Mac, modified
@@ -124,9 +125,14 @@ Load-bearing points for the postseason:
   its loss** (17–40, −25.56u on 57). Same population as `projected_k_rate < .180`
   (33.9%, −21.79u on 56). This is the cleanest actionable cut in the study.
 - Matchup variables are the only monotone, favorably-signed separator class:
-  `matchup_rating` positive 55.9% / +0.78u vs negative 39.5% / −23.68u;
-  `opponent_k_rate_vs_hand` ≥.230 → 52.7%. The boolean flags are all weak
-  (every q ≥ 0.68).
+  `matchup_rating ≥ +0.15` → **55.9% / +0.78u (n=34)** vs `−0.15 … +0.15` →
+  44.3% / −15.65u (n=79) vs `< −0.15` → **39.5% / −23.68u (n=86)**;
+  `opponent_k_rate_vs_hand` ≥.230 → 52.7%. Quote the boundary with the number:
+  the `GOOD_MATCHUP`/`TOUGH_MATCHUP` badges sit at ±0.2 and select a smaller,
+  different set. Restricted to the `line ≤ 3.5` bucket the same cut thins out to
+  9 / 17 / 31 plays (44.4% / 41.2% / **19.4%**, −2.02u / −3.64u / −19.90u) — one
+  more reason the ≤3.5 rule is a filter first (playbook item 5). The boolean
+  flags are all weak (every q ≥ 0.68).
 - **The top-ranked signals in the FDR screen are the market price itself**
   (`moneyline.price_a` p=0.0038; no-vig shadow probabilities p=0.0058–0.0059).
   Minimum q improved from 0.978 (13-day window) to **0.219** (full window), but
@@ -197,37 +203,51 @@ displayed at full confidence for a single reader.
    `Evidence era: regular_season (regular season and postseason are never
    blended)`. The first era-labeled production review is therefore the one
    covering the first graded postseason slate.
-5. **Pre-register the pitcher-K line rule** (playbook Open item 5) before
-   2026-09-29: exclude `line ≤ 3.5` K plays or require a favorable
-   `matchup_rating` override; baseline to beat is −25.56u on 57 plays. Finding 9
-   is independent corroboration — the Daily Card failed by routing volume into
-   exactly that bucket.
+5. ~~Pre-register the pitcher-K line rule.~~ **DONE 2026-09-28.** Declared
+   before the opener as **`postseason-k-line-rule-v1`**: a `line ≤ 3.5` K play is
+   excluded **unless** `matchup_rating ≥ +0.15`, and the override is an
+   **allowance (normal full-confidence display), not a re-weighting.** Baseline
+   it must beat: −25.56u on 57 plays (29.8%). The honest framing is recorded with
+   it — inside `≤ 3.5`, favorable **9 plays, 44.4%, −2.02u**; unfavorable
+   **31 plays, 19.4%, −19.90u** — so the rule is justified as a **filter** that
+   drops the study's worst bucket, not as a proven edge on the favorable nine.
+   Evaluation on era-filtered postseason plays, n<25 is "insufficient evidence",
+   kill if favorable `≤ 3.5` runs below the ~52.4% breakeven at −110 once n ≥ 25.
+   Full text: playbook Open item 5. Finding 9 is independent corroboration.
 6. **Do not blend postseason results into the regular-season sample.** Promotion
    from "regular season is the basis" to "postseason is its own basis" follows
    only the pre-registered triggers in Rule 3 of the playbook.
 7. Optional, not yet done: stamp `era` into the `grade_screen` result dict of
    `forecast_board_<date>.json`, not just the learning review, so the artifact is
    self-describing.
-8. **Known production behavior — an off-day run is recorded as `failed`.**
-   **Observed 2026-09-28.**
-   `run_forecast_board.required_family_errors` (`run_forecast_board.py:687`)
-   refuses to publish when any required family is empty, and it does **not**
+8. ~~Known production behavior — an off-day run is recorded as `failed`.~~
+   **RESOLVED 2026-09-28 and shipped: the board skips and succeeds on an empty
+   slate, and still fails closed when games exist.**
+   The observed defect was that `run_forecast_board.required_family_errors`
+   refused to publish whenever any required family was empty and did **not**
    distinguish *"MLB has no games this date"* from *"the sources returned
    nothing"*. The 2026-09-28 noon slot (zero games) fired at
-   `2026-09-28T16:15:03Z`, exited 1 (`ExecMainStatus=1`), and recorded the
-   identical message to the 2026-09-27 source failure in
-   `outputs/run_status.json` — even though its collectors reported `statuses`
-   both `ok` and simply returned a legitimately empty slate (`row_count: 0`).
-   The 2026-09-27 afternoon failure (`2026-09-27T20:45:17Z`) had games, already
-   started. **The two are indistinguishable in the artifact**, which is why the
-   gate cannot simply be removed. The grader does **not** mirror this:
-   `grade_screen("2026-09-28")` returns `learning={}`, writes no review, and
-   records `success`. Today's afternoon slot (16:45 ET) is expected to repeat the
-   board failure; every postseason off day will too.
-   **Decision pending: skip-and-succeed on an empty slate, or keep failing
-   closed.** No picks are affected — 2026-09-29's first game is 18:00Z, so the
-   noon slot still collects fresh pregame lines. Deliberately not changed without
-   that decision.
+   `2026-09-28T16:15:03Z`, exited 1, and recorded the identical message to the
+   2026-09-27 source failure — despite collectors reporting `statuses` both `ok`
+   and returning a legitimately empty slate (`row_count: 0`). The two were
+   indistinguishable in the artifact, which is why the gate could not simply be
+   deleted.
+   **Mechanism:** `run_forecast_board.py` gained `scheduled_game_count()`
+   (returns `None` when the schedule is unreadable, so an unreachable schedule
+   still fails closed) and `only_empty_families()`; the gate is now *decide →
+   write the board once → skip or fail*, the skip path returns 0 before the
+   ledger append and before the Discord block, and the artifact carries
+   `skip_reason: "no_slate"`. `run_forecast_pipeline.py` reads it back via
+   `board_skip_reason(screen, slot, since)` with the same mtime grace as
+   `newest_export` (a stale marker cannot be re-reported), and prints
+   `board skipped (<reason>); nothing published`.
+   **Evidence:** live schedule lookup gives 2026-09-27 → 15 games (still fails
+   closed), 2026-09-28 → 0 (skip and succeed), 2026-09-29 → 4 (real board);
+   `OffDaySkipTests` (6) + `BoardSkipReasonTests` (4) +
+   `test_off_day_board_skip_is_a_pass`, full suite green. The grader already
+   behaved this way on the off day (`grade_screen("2026-09-28")` → `learning={}`,
+   no review, `success`), so the pipeline is no longer asymmetric. No picks are
+   affected; the noon slot still collects fresh pregame lines for 2026-09-29.
 
 Pull review artifacts from the Mac with the verified SSH form (the `azure`
 config alias was never confirmed; the literal host and key are):
