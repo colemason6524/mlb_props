@@ -338,7 +338,12 @@ does not publish, that is a **process incident, not a quiet day**:
    playoff run that is the expected outcome rather than a failure.
 
    **Kill condition.** If favorable-matchup `≤ 3.5` plays run below the ~52.4%
-   breakeven at −110 once n ≥ 25, drop the override and exclude the bucket.
+   breakeven at −110 once n ≥ 25, drop the override and exclude the bucket. The
+   rule is **enforced in the board builder as of 2026-09-30** (`commit 999ab68`):
+   `run_forecast_board.pitcher_rows` drops `line ≤ 3.5` rows without an explicit
+   `matchup_rating ≥ +0.15`, and board rows now carry `matchup_rating` so the
+   allowance stays auditable. (The 2026-09-29 board pre-dates enforcement:
+   Boyd at line 3.5, matchup −0.02, published then and graded 0–1 as an under.)
 6. ~~Repair the always-under baseline in the standing tooling.~~ **DONE
    2026-09-28.** `pitcher_grading.daily_card_summary` reported `baseline_rows 0`
    because it read `history.candidates` while

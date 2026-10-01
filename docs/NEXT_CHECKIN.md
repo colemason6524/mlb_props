@@ -1,4 +1,4 @@
-# Current Project Checkpoint — 2026-09-28
+# Current Project Checkpoint — 2026-09-30 (updated evening, after the first graded postseason slate)
 
 This is the authoritative current-status and continuation note. For live timer
 definitions and VM commands, see `docs/AZURE_VM_OPERATIONS.md`. Older dated
@@ -217,9 +217,46 @@ displayed at full confidence for a single reader.
 6. **Do not blend postseason results into the regular-season sample.** Promotion
    from "regular season is the basis" to "postseason is its own basis" follows
    only the pre-registered triggers in Rule 3 of the playbook.
-7. Optional, not yet done: stamp `era` into the `grade_screen` result dict of
-   `forecast_board_<date>.json`, not just the learning review, so the artifact is
-   self-describing.
+7. ~~Optional: stamp `era` into the `grade_screen` result dict of
+   `forecast_board_<date>.json`.~~ **DONE 2026-09-30 (`a45b765`)**: the grade
+   artifact is now self-describing.
+
+## First postseason cycle — verified end-to-end (2026-09-30)
+
+The pre-existing era-work validation item is closed with production evidence:
+
+- **2026-09-29 (Wild Card opener).** Noon and afternoon boards published; grader
+  settled 16 plays at 06:00 ET 2026-09-30, ledger +28, delivery sent.
+  Result: **5–11, −7.37u** — game_ml 4–0 (+3.09u), game_rl 1–3 (−2.46u),
+  game_total 0–4 on unders (−4.00u), pitcher_k 0–4 on unders (−4.00u).
+  `learning_review_2026-09-29.md` reads **"Evidence era: postseason"**; buckets
+  reconcile exactly; exact-input join audit 16/16 with all source prices matching.
+- **2026-09-30 (Wild Card game 2s).** Noon (16 rows) and afternoon (13 rows)
+  boards published on schedule; slate in play at this writing; grade due
+  06:00 ET 2026-10-01. Matchups: PHI@ATL, CWS@HOU, BOS@NYY, CHC@SD.
+- **Deployment state:** Mac and VM at `999ab68`. Two commits shipped this
+  checkpoint: `a45b765` (era stamped into the grade artifact — playoff open item
+  7) and `999ab68` (the pre-registered `postseason-k-line-rule-v1` is now
+  **enforced** in `run_forecast_board.pitcher_rows` — line ≤ 3.5 K plays publish
+  only with `matchup_rating ≥ +0.15`, and rows carry `matchup_rating` for audit.
+  The 09-29 Boyd 3.5-under (matchup −0.02) exposed the rule as documentation-only;
+  it is now gated). Enforcing a pre-registered rule is not a policy change.
+- **VM health at check:** disk 21% used, timers all active with clean runs,
+  only a pre-existing time-sensitive test
+  (`test_hot_hits_price_shadow.SlateEventSlugTest`) fails on the VM when
+  `date.today()` has crossed to the next date under UTC — it passes locally and
+  under `TZ=America/New_York`. Known time-brittleness, unrelated to selections;
+  fix separately.
+- **RL-family note (not a defect):** game-RL probabilities are raw-distribution,
+  push-conditioned: for a home −1.5 line, `away_covers` p = 1 − P(home by ≥2),
+  which can legitimately exceed the calibrated ML win probability. The model's
+  systematic lean toward +1.5 dog covers is a model characteristic already
+  visible in the season record (RL 1–3 again on 09-29); any change is gated by
+  the playbook, not by one day.
+- **No evidence-driven changes.** n=16 (and n=32 after two days) cannot trigger
+  Rule 3 promotion or any recap rule; eras remain separate. tomorrow's grade
+  settles tonight's slate; Division Series opens 2026-10-03 and materially
+  widens the slate — timers stay as-is.
 8. ~~Known production behavior — an off-day run is recorded as `failed`.~~
    **RESOLVED 2026-09-28 and shipped: the board skips and succeeds on an empty
    slate, and still fails closed when games exist.**
