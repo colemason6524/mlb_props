@@ -85,7 +85,11 @@ class LedgerTests(unittest.TestCase):
 
 
 class RuntimeSafetyTests(unittest.TestCase):
-    def test_required_families_must_be_healthy_and_nonempty(self) -> None:
+    def test_game_capture_can_publish_without_eligible_pitcher_props(self) -> None:
+        sections = {"pitcher_k": [], "game": [{"pick": "home"}]}
+        self.assertEqual(required_family_errors({"pitcher_k": "ok", "game": "ok"}, sections), [])
+
+    def test_source_failures_and_empty_game_capture_still_fail_closed(self) -> None:
         sections = {"pitcher_k": [{"pick": "over"}], "game": [{"pick": "home"}]}
         self.assertEqual(required_family_errors({"pitcher_k": "ok", "game": "ok"}, sections), [])
         self.assertEqual(
@@ -94,7 +98,7 @@ class RuntimeSafetyTests(unittest.TestCase):
         )
         self.assertEqual(
             required_family_errors({"pitcher_k": "ok", "game": "ok"}, {"pitcher_k": [], "game": []}),
-            ["pitcher_k=empty", "game=empty"],
+            ["game=empty"],
         )
 
     def test_retention_prunes_only_expired_matching_files(self) -> None:

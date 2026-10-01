@@ -694,12 +694,20 @@ def board_filename(screen: str, slot: str | None = None) -> str:
 
 
 def required_family_errors(statuses: dict[str, str], sections: dict[str, list[dict]]) -> list[str]:
+    """Require healthy inputs and game-market rows; pitcher props may be absent.
+
+    Postseason books do not consistently offer pitcher strikeout lines. An
+    otherwise valid game-market capture should still publish when the pitcher
+    export was collected successfully but produced no eligible K props. A
+    missing/failed pitcher export remains an error, as does an empty game
+    market section.
+    """
     errors = []
     for family, section in (("pitcher_k", "pitcher_k"), ("game", "game")):
         status = statuses.get(family, "missing")
         if status != "ok":
             errors.append(f"{family}={status}")
-        elif not sections.get(section):
+        elif family == "game" and not sections.get(section):
             errors.append(f"{family}=empty")
     return errors
 
@@ -828,6 +836,9 @@ def main(argv: list[str] | None = None) -> int:
         for family_rows in sections.values()
         for row in family_rows
     ]
+    capture_warnings = []
+    if statuses.get("pitcher_k") == "ok" and not sections.get("pitcher_k"):
+        capture_warnings.append("pitcher_k=empty; publishing available game markets without pitcher props")
     board = {
         "run_id": run_id,
         "screen_date": screen,
@@ -840,6 +851,8 @@ def main(argv: list[str] | None = None) -> int:
         "sections": sections,
         "row_count": len(banner_rows),
     }
+    if capture_warnings:
+        board["capture_warnings"] = capture_warnings
     # An off day returns every family empty. That is also what a source failure
     # returns, so ask the schedule which one this is before deciding: zero
     # scheduled games is a deliberate skip, anything else still fails closed.
