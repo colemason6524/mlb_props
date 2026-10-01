@@ -1097,6 +1097,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
     canonical_pending = int((canonical_summary or {}).get("totals", {}).get("pending", 0) or 0)
     result = {
         "screen_date": screen,
+        "era": evidence_era(screen),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "api_error": api_error,
         "latest_run_id": latest,
