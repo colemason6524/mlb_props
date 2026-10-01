@@ -373,3 +373,62 @@ class DeliveryDedupTests(unittest.TestCase):
 
     def test_no_slot_never_dedupes(self) -> None:
         self.assertFalse(delivery_already_sent("2026-09-11", None))
+
+
+class PostseasonKLineRuleTests(unittest.TestCase):
+    """pre-registered postseason-k-line-rule-v1: pitcher-K rows with line
+    <= 3.5 are excluded unless the row carries matchup_rating >= +0.15."""
+
+    def _export(self, line, matchup_rating):
+        cand = {
+            "prop_type": "PITCHER_STRIKEOUTS",
+            "subject_name": "Test Pitcher",
+            "line": line,
+            "projected_strikeouts": 5.0,
+            "price_shadow": {
+                "over_price": -110,
+                "under_price": -110,
+                "bookmaker": "fanduel",
+                "source": "test",
+                "price_collected_at": "2026-09-30T00:00:00+00:00",
+            },
+        }
+        if matchup_rating is not None:
+            cand["matchup_rating"] = matchup_rating
+        return {"candidates": [cand]}
+
+    def _engine(self):
+        from mlb_props.calibration import IsotonicCalibrator, LogisticModel
+        from mlb_props.forecasting.pitcher_k import PitcherEngineResult
+
+        logit = LogisticModel()
+        logit.weights = [0.0] * 19
+        logit.bias = 0.0
+        logit.n_features = 19
+        logit._means = [0.0] * 19
+        logit._stds = [1.0] * 19
+        return PitcherEngineResult(
+            logit=logit, isotonic=IsotonicCalibrator(), factor=1.0, dispersion=6.0, n_rows=1
+        )
+
+    def test_low_line_excluded_without_explicit_favorable_matchup(self) -> None:
+        from run_forecast_board import pitcher_rows
+
+        for rating in (None, -0.02, 0.0, 0.14):
+            rows = pitcher_rows(self._export(3.5, rating), self._engine())
+            self.assertEqual(rows, [], f"rating {rating!r} must be excluded")
+
+    def test_low_line_kept_with_favorable_matchup(self) -> None:
+        from run_forecast_board import pitcher_rows
+
+        rows = pitcher_rows(self._export(3.5, 0.15), self._engine())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["line"], 3.5)
+        self.assertEqual(rows[0]["matchup_rating"], 0.15)
+
+    def test_normal_lines_unaffected(self) -> None:
+        from run_forecast_board import pitcher_rows
+
+        rows = pitcher_rows(self._export(4.5, -0.5), self._engine())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["matchup_rating"], -0.5)

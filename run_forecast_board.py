@@ -248,6 +248,13 @@ def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
         proj = cand.get("projected_strikeouts")
         if line is None or proj is None:
             continue
+        matchup_rating = cand.get("matchup_rating")
+        if float(line) <= 3.5 and not (
+            matchup_rating is not None and matchup_rating >= 0.15
+        ):
+            # pre-registered postseason-k-line-rule-v1: low-line K plays are
+            # excluded unless the row carries matchup_rating >= +0.15.
+            continue
         opportunity = cand.get("opportunity_shadow") or {}
         recency = cand.get("recency_shadow") or {}
         features = PitcherFeatures(
@@ -306,6 +313,7 @@ def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
             "projected_batters_faced": cand.get("projected_batters_faced"),
             "projected_k_rate": cand.get("projected_k_rate"),
             "opportunity_confidence": (cand.get("opportunity_shadow") or {}).get("opportunity_confidence"),
+            "matchup_rating": matchup_rating,
             "engine_version": probs.version,
             "model_side_vs_export_side": cand.get("side"),
         })
