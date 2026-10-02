@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "project_id": "mlb_props",
+  "updated_at": "2026-10-01T18:29:03-04:00",
+  "status": "observing",
+  "summary": "The 2026-09-30 postseason slate graded successfully (18 decisions, 12-6, +3.15u; exact-source joins 18/18). Deployed 2f088d8 to allow a healthy game-market capture to publish when pitcher K props are absent; the Oct 1 afternoon retry collected fresh PHI@ATL markets, published three game rows, and recorded one Discord delivery with an explicit empty-pitcher warning. Both earlier Oct 1 scheduled attempts had failed before deployment on pitcher_k=empty.",
+  "experiment": "Postseason capture pipeline; missing pitcher strikeout lines are common and should not suppress available game-market captures. Keep selection rules unchanged; pitcher K is absent unless a line is posted and qualifies.",
+  "watching_for": "The 2026-10-01 grade settling the three PHI@ATL game-market rows with Evidence era: postseason; subsequent playoff captures publishing game markets even when pitcher K lines are unavailable.",
+  "next_action": "After the 2026-10-01 slate is graded on 2026-10-02, inspect its learning review and confirm the three captured markets settled; continue monitoring K-line availability without relaxing selection thresholds.",
+  "deployed": true,
+  "git_commit": "2f088d8",
+  "check_back": {
+    "kind": "grade_event",
+    "label": "after the 2026-10-01 slate is graded",
+    "target": null,
+    "baseline": "2026-10-01T18:29:03-04:00",
+    "events": [
+      "Daily grade + learning review (sports-mlb-grade-board)",
+      "Full board publication (sports-mlb-pipeline-noon / -afternoon)"
+    ],
+    "target_date": "2026-10-01"
+  },
+  "docs": [
+    {
+      "label": "Next check-in",
+      "path": "docs/NEXT_CHECKIN.md"
+    },
+    {
+      "label": "Azure VM operations",
+      "path": "docs/AZURE_VM_OPERATIONS.md"
+    },
+    {
+      "label": "Pitcher props handoff",
+      "path": "docs/PITCHER_PROPS_HANDOFF.md"
+    },
+    {
+      "label": "Hot hits handoff",
+      "path": "docs/HOT_HITS_HANDOFF.md"
+    }
+  ]
+}
