@@ -1,20 +1,22 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-04T02:45:51.491117+00:00",
+  "updated_at": "2026-10-13T01:07:44+00:00",
   "status": "observing",
-  "summary": "Reviewed Oct 1 grade (graded Oct 2 06:00 EDT): 3 PHI@ATL rows settled 1-2, -1.115u. Learning review clean with 3/3 exact joins. Post-fix scheduled runs healthy; stale afternoon failed flag cleared by Oct 2 evening run. No action needed.",
-  "experiment": "Postseason capture pipeline; missing pitcher strikeout lines are common and should not suppress available game-market captures. Keep selection rules unchanged; pitcher K is absent unless a line is posted and qualifies.",
-  "watching_for": "The 2026-10-01 grade settling the three PHI@ATL game-market rows with Evidence era: postseason; subsequent playoff captures publishing game markets even when pitcher K lines are unavailable.",
-  "next_action": "Review next grade when a non-empty slate settles.",
-  "deployed": true,
-  "git_commit": "2f088d8",
+  "summary": "Collection phase: monitoring postseason performance. Selection audit queued after NFL.",
+  "experiment": null,
+  "watching_for": null,
+  "next_action": null,
+  "deployed": false,
+  "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "after the next MLB slate is graded",
+    "label": "after a week of games",
     "target": null,
-    "baseline": "2026-10-04T02:45:51.491117+00:00",
-    "target_date": "2026-10-04"
+    "baseline": "2026-10-13T01:07:44+00:00",
+    "events": [],
+    "target_date": null,
+    "monitoring": false
   },
   "docs": [
     {
