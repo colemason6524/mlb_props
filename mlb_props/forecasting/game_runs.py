@@ -1,7 +1,7 @@
-"""Game forecast engine (game-run-model-v1).
+"""Game forecast engine (game-run-model-v2).
 
-One linear run projection per batting side, fitted by gradient least
-squares with feature scaling. Moneyline / run-line / total all come from
+One linear run projection per batting side, fitted by ridge regression
+with feature scaling. Moneyline / run-line / total all come from
 the same run difference (normal approximation with residual scale). An
 isotonic calibrator sits on the moneyline output. The model owns the
 pick; price is never consulted.
@@ -13,43 +13,35 @@ from dataclasses import dataclass, field
 
 from ..calibration import IsotonicCalibrator
 
+_RIDGE_L2 = 10.0  # tuned via rolling OOF; override in scripts.
+
 
 @dataclass
 class TeamGameFeatures:
-    """One batting side's context for a game."""
+    """One batting side's context for a game (game-run-model-v2)."""
 
-    runs_per_game_l7: float
-    runs_per_game_season: float
-    runs_allowed_per_game_l7: float
-    opp_starter_runs_allowed_per_start_l5: float
-    opp_starter_hits_allowed_per_start: float
-    opp_starter_walks_per_start: float
-    opp_starter_k_per_start: float
-    opp_starter_deep_start_rate: float
-    opp_bullpen_pitches_last3: float | None = None
-    park_run_factor: float = 1.0
+    adj_offense_l30: float
+    opp_defense_l30: float
+    opp_sp_ra_l5: float
+    opp_sp_hits_l5: float
+    opp_sp_bb_l5: float
+    opp_sp_k_l5: float
+    opp_sp_deep_l5: float
+    park_factor: float
     home: int = 0
-    doubleheader: int = 0
-    night_game: int = 0
-    weather_runs_adj: float = 0.0
 
     def row(self) -> list[float]:
         return [
             1.0,  # intercept, never scaled
-            self.runs_per_game_l7,
-            self.runs_per_game_season,
-            self.runs_allowed_per_game_l7,
-            math.log(max(self.opp_starter_runs_allowed_per_start_l5, 0.1)),
-            self.opp_starter_hits_allowed_per_start,
-            self.opp_starter_walks_per_start,
-            self.opp_starter_k_per_start,
-            self.opp_starter_deep_start_rate,
-            self.opp_bullpen_pitches_last3 or -1.0,
-            self.park_run_factor,
+            self.adj_offense_l30,
+            self.opp_defense_l30,
+            math.log(max(self.opp_sp_ra_l5, 0.1)),
+            self.opp_sp_hits_l5,
+            self.opp_sp_bb_l5,
+            self.opp_sp_k_l5,
+            self.opp_sp_deep_l5,
+            self.park_factor,
             float(self.home),
-            float(self.doubleheader),
-            float(self.night_game),
-            self.weather_runs_adj,
         ]
 
 
@@ -99,43 +91,31 @@ def _normal_cdf(value: float) -> float:
 def _least_squares(
     rows: list[list[float]],
     targets: list[float],
-    l2: float = 0.05,
-    lr: float = 0.05,
-    epochs: int = 900,
+    l2: float = 1.0,
 ) -> tuple[list[float], list[float], list[float]]:
-    """Returns (weights incl. unscaled intercept, column means, stds).
-    Column 0 stays at raw 1.0; other columns are standardised."""
-    n_features = len(rows[0])
-    n = len(rows)
-    means = [sum(row[c] for row in rows) / n for c in range(1, n_features)]
-    stds = []
-    for c in range(1, n_features):
-        variance = sum((row[c] - means[c - 1]) ** 2 for row in rows) / n
-        stds.append(math.sqrt(variance) or 1.0)
-    scaled = [
-        [1.0] + [(row[c] - means[c - 1]) / stds[c - 1] for c in range(1, n_features)]
-        for row in rows
-    ]
-    weights = [0.0] * n_features
-    for _ in range(epochs):
-        grad = [0.0] * n_features
-        for row, target in zip(scaled, targets):
-            pred = sum(w * x for w, x in zip(weights, row))
-            err = pred - target
-            for c, x in enumerate(row):
-                grad[c] += err * x * lr / n
-        weights[0] -= grad[0]
-        for c in range(1, n_features):
-            grad[c] += l2 * lr * weights[c]
-            weights[c] -= grad[c]
-    return weights, means, stds
+    """Ridge regression, closed form. Column 0 (intercept) is not scaled
+    and not penalised; other columns are standardised first."""
+    import numpy as np
+
+    X = np.asarray(rows, dtype=float)
+    y = np.asarray(targets, dtype=float)
+    means = X[:, 1:].mean(axis=0)
+    stds = X[:, 1:].std(axis=0)
+    stds[stds == 0.0] = 1.0
+    Xs = np.ones_like(X)
+    Xs[:, 1:] = (X[:, 1:] - means) / stds
+    n_feat = Xs.shape[1]
+    A = Xs.T @ Xs
+    idx = np.arange(1, n_feat)
+    A[idx, idx] += l2
+    weights = np.linalg.solve(A, Xs.T @ y)
+    return weights.tolist(), means.tolist(), stds.tolist()
 
 
 def fit_game_engine_runs(
     game_features: list[GameFeatures],
     home_wins: list[int],
     run_targets: list[tuple[float, float]],
-    epochs: int = 900,
 ) -> GameEngineFit | None:
     """`run_targets[i] = (team_runs_for_the_HOME_team, away_team_runs)`.
     Each team side contributes one row to a pooled linear run projection."""
@@ -157,7 +137,7 @@ def fit_game_engine_runs(
         targets.append(float(run_targets[i][0]))
         targets.append(float(run_targets[i][1]))
 
-    weights, means, stds = _least_squares(rows, targets, epochs=epochs)
+    weights, means, stds = _least_squares(rows, targets, l2=_RIDGE_L2)
 
     def mu(side: TeamGameFeatures) -> float:
         row = side.row()
@@ -224,7 +204,7 @@ def forecast_game(
     features: GameFeatures,
     total_line: float | None = None,
     run_line: float | None = None,
-    version: str = "game-run-model-v1",
+    version: str = "game-run-model-v2",
 ) -> GameForecast:
     mu_home = float(mu_of_side(fit, features.home_side))
     mu_away = float(mu_of_side(fit, features.away_side))

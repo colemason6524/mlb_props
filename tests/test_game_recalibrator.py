@@ -15,18 +15,26 @@ def test_recalibrator_loads():
     assert "game_rl" in r
 
 
-def test_ml_recalibration_shrinks_overconfidence():
+def test_ml_recalibration_near_identity():
+    # v2 engine is honestly calibrated; the refit recalibrator should be
+    # close to identity through the typical pick range, not the hard
+    # shrinkage v1 needed for its broken probabilities.
     r = board.load_game_recalibrator()
-    # model says 0.65 -> honest should be well below 0.5
-    honest = board.recalibrate_pick_prob(r, "game_ml", 0.65)
-    assert honest < 0.5, f"expected <0.5, got {honest}"
-    assert honest > 0.2, f"expected >0.2, got {honest}"
+    honest = board.recalibrate_pick_prob(r, "game_ml", 0.50)
+    assert 0.45 < honest < 0.60, f"expected ~identity, got {honest}"
+    # monotone: higher in -> higher out
+    lo = board.recalibrate_pick_prob(r, "game_ml", 0.45)
+    hi = board.recalibrate_pick_prob(r, "game_ml", 0.55)
+    assert hi >= lo, f"expected monotone, got {lo} -> {hi}"
 
 
-def test_rl_recalibration_shrinks_overconfidence():
+def test_rl_recalibration_near_identity():
     r = board.load_game_recalibrator()
-    honest = board.recalibrate_pick_prob(r, "game_rl", 0.75)
-    assert honest <= 0.55, f"expected <=0.55, got {honest}"
+    honest = board.recalibrate_pick_prob(r, "game_rl", 0.60)
+    assert 0.50 < honest < 0.80, f"expected ~identity, got {honest}"
+    lo = board.recalibrate_pick_prob(r, "game_rl", 0.55)
+    hi = board.recalibrate_pick_prob(r, "game_rl", 0.70)
+    assert hi >= lo, f"expected monotone, got {lo} -> {hi}"
 
 
 def test_recalibrator_passthrough():

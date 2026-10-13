@@ -237,7 +237,10 @@ def load_game_engine() -> GameEngineFit | None:
 
 
 def load_game_recalibrator():
-    payload_path = ENGINES_DIR / "game_recalibrator_v1.json"
+    # v2 refit on game-run-model-v2 OOF; fall back to v1 artifact if missing.
+    payload_path = ENGINES_DIR / "game_recalibrator_v2.json"
+    if not payload_path.exists():
+        payload_path = ENGINES_DIR / "game_recalibrator_v1.json"
     if not payload_path.exists():
         return None
     payload = json.loads(payload_path.read_text())

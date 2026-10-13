@@ -21,13 +21,17 @@ GAME_CACHE_DIRNAME = ".cache/games"
 STARTER_CACHE_SECONDS = 6 * 60 * 60
 SEASON_START = date(2026, 4, 1)
 
-PARK_RUN_FACTOR = {
-    "AZ": 1.01, "ATL": 1.03, "BAL": 0.97, "BOS": 1.02, "CHC": 1.01, "CWS": 1.03,
-    "CIN": 1.09, "CLE": 0.98, "COL": 1.12, "DET": 0.97, "HOU": 0.99, "KC": 1.02,
-    "LAA": 1.00, "LAD": 0.98, "MIA": 0.95, "MIL": 1.02, "MIN": 1.01, "NYM": 0.98,
-    "NYY": 1.03, "ATH": 0.95, "PHI": 1.03, "PIT": 0.98, "SD": 0.96, "SF": 0.94,
-    "SEA": 0.95, "STL": 0.99, "TB": 0.97, "TEX": 1.05, "TOR": 1.02, "WSH": 1.01,
+# Park run factors keyed by MLB Stats API team ID. The schedule cache does
+# not carry team abbreviations, so the old abbreviation-keyed map never
+# matched and the park feature was a constant 1.0.
+PARK_FACTOR_BY_TEAM_ID = {
+    109: 1.01, 144: 1.03, 110: 0.97, 111: 1.02, 112: 1.01, 145: 1.03,
+    113: 1.09, 114: 0.98, 115: 1.12, 116: 0.97, 117: 0.99, 118: 1.02,
+    108: 1.00, 119: 0.98, 146: 0.95, 158: 1.02, 142: 1.01, 121: 0.98,
+    147: 1.03, 133: 0.95, 143: 1.03, 134: 0.98, 135: 0.96, 137: 0.94,
+    136: 0.95, 138: 0.99, 139: 0.97, 140: 1.05, 141: 1.02, 120: 1.01,
 }
+LEAGUE_AVG_BULLPEN_RA9 = 4.30
 
 _repo_root: Path | None = None
 
@@ -113,10 +117,12 @@ def team_history_map(games: list[dict]) -> dict[int, list[dict]]:
         history[home_id].append({
             "date": d, "gamePk": game["gamePk"],
             "runs_for": home["score"], "runs_against": away["score"],
+            "park": home_id,
         })
         history[away_id].append({
             "date": d, "gamePk": game["gamePk"],
             "runs_for": away["score"], "runs_against": home["score"],
+            "park": home_id,
         })
     for rows in history.values():
         rows.sort(key=lambda r: r["date"])
@@ -133,6 +139,118 @@ def team_feature_pair(rows: list[dict], screen: str) -> tuple[tuple[float, float
     allowed_l7 = sum(row["runs_against"] for row in last7) / len(last7)
     allowed_season = sum(row["runs_against"] for row in prior) / len(prior)
     return (runs_l7, runs_season), (allowed_l7, allowed_season)
+
+
+_sp_gamelog_index = None
+
+
+def sp_gamelog_index() -> dict:
+    """pitcher_id -> {game_date: (outs, runs)} from cached gamelogs.
+
+    Uses the split-level `date` field (game.gameDate is absent). Loaded
+    once per process; the underlying cache files are managed by
+    starter_features.
+    """
+    global _sp_gamelog_index
+    if _sp_gamelog_index is not None:
+        return _sp_gamelog_index
+    idx: dict = {}
+    for path in cache_dir().glob("pitcher_*_2026.json"):
+        try:
+            pid = int(path.stem.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        try:
+            splits = json.loads(path.read_text())
+        except Exception:
+            continue
+        per_game: dict = {}
+        for row in splits:
+            stat = row.get("stat", {})
+            if not stat.get("gamesStarted"):
+                continue
+            gd = (row.get("date") or "")[:10]
+            if not gd:
+                continue
+            outs = int(stat.get("outs") or 0)
+            runs = int(stat.get("earnedRuns") or 0) + int(stat.get("unearnedRuns") or 0)
+            per_game[gd] = (outs, runs)
+        idx[pid] = per_game
+    _sp_gamelog_index = idx
+    return idx
+
+
+def bullpen_history_map(finals: list[dict]) -> dict[int, list[tuple]]:
+    """team_id -> chronological [(date, bullpen_ra9)] for finished games.
+
+    bullpen_ra9 = (team_runs_allowed - starter_runs) / bullpen_ip * 9,
+    where the starter's line comes from his gamelog matched on date.
+    Capped at 18.0 to contain blowups/opener chaos.
+    """
+    sp_idx = sp_gamelog_index()
+    bp: dict = defaultdict(list)
+    for game in finals:
+        d = game["gameDate"][:10]
+        n_innings = len((game.get("linescore") or {}).get("innings") or []) or 9
+        for tkey in ("home", "away"):
+            team = game["teams"][tkey]
+            tid = team["team"]["id"]
+            tra = team.get("score")
+            if tra is None:
+                continue
+            sp_id = (team.get("probablePitcher") or {}).get("id")
+            if not sp_id:
+                continue
+            glog = sp_idx.get(sp_id)
+            if not glog or d not in glog:
+                continue
+            outs, sp_runs = glog[d]
+            bp_runs = max(0, tra - sp_runs)
+            bp_ip = max(n_innings - outs / 3.0, 0.5)
+            bp_ra9 = min(bp_runs / bp_ip * 9.0, 12.0)
+            bp[tid].append((d, bp_ra9))
+    for rows in bp.values():
+        rows.sort(key=lambda r: r[0])
+    return bp
+
+
+def bullpen_ra9_prior(bp_hist: dict, team_id: int, screen: str,
+                      window_days: int = 14, min_games: int = 3) -> float:
+    """Trailing-window mean bullpen RA/9 strictly before screen."""
+    rows = [r for r in bp_hist.get(team_id, []) if r[0] < screen]
+    if len(rows) < min_games:
+        return LEAGUE_AVG_BULLPEN_RA9
+    # last `window_days` of entries (approx: entries are daily-ish)
+    window = rows[-window_days:]
+    return sum(r[1] for r in window) / len(window)
+
+
+def adj_defense_prior(history: dict, team_id: int, screen: str,
+                      window_games: int = 30, min_games: int = 10) -> float:
+    """Trailing park-adjusted runs ALLOWED/game strictly before screen."""
+    rows = [r for r in history.get(team_id, []) if r["date"] < screen]
+    window = rows[-window_games:]
+    if len(window) < min_games:
+        return 4.50
+    adj = [r["runs_against"] / PARK_FACTOR_BY_TEAM_ID.get(r.get("park"), 1.0)
+           for r in window]
+    return sum(adj) / len(adj)
+
+
+def adj_offense_prior(history: dict, team_id: int, screen: str,
+                      window_games: int = 30, min_games: int = 10) -> float:
+    """Trailing park-adjusted runs/game strictly before screen.
+
+    Each game's runs are deflated by the park they were scored in, so
+    Coors-inflated lines don't masquerade as offensive talent.
+    """
+    rows = [r for r in history.get(team_id, []) if r["date"] < screen]
+    window = rows[-window_games:]
+    if len(window) < min_games:
+        return 4.50
+    adj = [r["runs_for"] / PARK_FACTOR_BY_TEAM_ID.get(r.get("park"), 1.0)
+           for r in window]
+    return sum(adj) / len(adj)
 
 
 def starter_features(pitcher_id: int | None, screen: str) -> dict | None:
@@ -160,8 +278,8 @@ def starter_features(pitcher_id: int | None, screen: str) -> dict | None:
         stat = row.get("stat", {})
         if not stat.get("gamesStarted"):
             continue
-        game_date = (row.get("game", {}) or {}).get("gameDate", "")[:10]
-        if game_date >= screen:
+        game_date = (row.get("date") or "")[:10]
+        if not game_date or game_date >= screen:
             continue  # strict PIT
         outs = int(stat.get("outs") or 0)
         runs = int(stat.get("earnedRuns") or 0) + int(stat.get("unearnedRuns") or 0)
@@ -192,66 +310,52 @@ def build_features_pregame(
     day_map: dict[str, list[dict]],
     history: dict[int, list[dict]],
 ) -> GameFeatures | None:
-    """Features for an upcoming game (works pre-game; no score needed)."""
+    """Features for an upcoming game (works pre-game; no score needed).
+
+    v2 feature set (game-run-model-v2):
+      - park-adjusted trailing-30g offense replaces raw runs_l7/season
+      - opposing starter last-5 (PIT-fixed; the old gameDate lookup leaked)
+      - park factor via team ID (old abbreviation lookup never matched)
+    Bullpen helpers (bullpen_history_map etc.) are available but not wired
+    into v2: the per-game RA/9 construction was too noisy (trades, probable-
+    vs-actual mismatches). Future work.
+    """
     screen = game["gameDate"][:10]
     home = game["teams"]["home"]
     away = game["teams"]["away"]
     home_id = home["team"]["id"]
     away_id = away["team"]["id"]
 
-    offense_h, allowed_h = team_feature_pair(history.get(home_id, []), screen)
-    offense_a, allowed_a = team_feature_pair(history.get(away_id, []), screen)
-
-    doubleheader = 0
-    for other in day_map.get(screen, []):
-        if other["gamePk"] == game["gamePk"]:
-            continue
-        ids = (other["teams"]["home"]["team"]["id"], other["teams"]["away"]["team"]["id"])
-        if home_id in ids or away_id in ids:
-            doubleheader = 1
-            break
-
-    try:
-        game_hour = int(game["gameDate"][11:13])
-    except (KeyError, ValueError, IndexError):
-        game_hour = 19
-    night = 1 if (game_hour >= 17 or game_hour < 5) else 0
-
     probable_home = home.get("probablePitcher") or {}
     probable_away = away.get("probablePitcher") or {}
     sp_away = starter_features(probable_away.get("id"), screen)
     sp_home = starter_features(probable_home.get("id"), screen)
-    abbr = home["team"].get("abbreviation", "")
-    park = PARK_RUN_FACTOR.get(abbr, 1.0)
+    park = PARK_FACTOR_BY_TEAM_ID.get(home_id, 1.0)
 
     def side(
-        offense: tuple[float, float],
-        allowed: tuple[float, float],
+        team_id: int,
+        opp_id: int,
         opp_sp: dict | None,
         home_flag: int,
     ) -> TeamGameFeatures:
         st = opp_sp or {"runs": 4.0, "hits": 6.0, "walks": 2.2, "k": 5.5, "deep": 0.55}
         return TeamGameFeatures(
-            runs_per_game_l7=offense[0],
-            runs_per_game_season=offense[1],
-            runs_allowed_per_game_l7=allowed[0],
-            opp_starter_runs_allowed_per_start_l5=st["runs"],
-            opp_starter_hits_allowed_per_start=st["hits"],
-            opp_starter_walks_per_start=st["walks"],
-            opp_starter_k_per_start=st["k"],
-            opp_starter_deep_start_rate=st["deep"],
-            opp_bullpen_pitches_last3=None,
-            park_run_factor=park,
+            adj_offense_l30=adj_offense_prior(history, team_id, screen),
+            opp_defense_l30=adj_defense_prior(history, opp_id, screen),
+            opp_sp_ra_l5=st["runs"],
+            opp_sp_hits_l5=st["hits"],
+            opp_sp_bb_l5=st["walks"],
+            opp_sp_k_l5=st["k"],
+            opp_sp_deep_l5=st["deep"],
+            park_factor=park,
             home=home_flag,
-            doubleheader=doubleheader,
-            night_game=night,
         )
 
     return GameFeatures(
         game_pk=str(game["gamePk"]),
         screen_date=screen,
-        home_side=side(offense_h, allowed_h, sp_away, 1),
-        away_side=side(offense_a, allowed_a, sp_home, 0),
+        home_side=side(home_id, away_id, sp_away, 1),
+        away_side=side(away_id, home_id, sp_home, 0),
     )
 
 
