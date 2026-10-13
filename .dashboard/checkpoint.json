@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-13T04:16:41+00:00",
+  "updated_at": "2026-10-13T14:38:21+00:00",
   "status": "observing",
-  "summary": "game-run-model-v2 shipped: fixed starter PIT leakage (was using future starts in training), park factors via team ID, added opponent defense signal. OOF Brier 0.288->0.250, acc 55.9%. Monitoring postseason.",
+  "summary": "MLB injury pipeline built from scratch and shipped: ESPN per-team injury feed (mirrors WNBA source) + impact engine (mlb_props/injuries.py). SP scratch/change overrides the slate probable so the game engine re-projects with the actual starter; key hitter OUT (OPS>=.780, 200+ PA) debits adj_offense_l30 by min(0.60, max(0, OPS-.650)*4.3*.23); bullpen arms noted never debited; scratched-SP K props excluded. New pipeline stage run_injury_check.py runs between game-markets and board; dead ESPN feed degrades loudly, never kills the board. Timing fix: new evening slot 18:45 ET (sports-mlb-pipeline-evening.timer enabled) since 16:45 missed lineups for 8pm+ first pitches. Validation: 20 new unit tests, 366 passed full suite, live check on CLE@TB 2026-10-13 (probables confirmed, 9 injuries triaged), fabricated-scratch end-to-end moves win prob/run means correctly, full pipeline dry-run green. Commit 9e8f9e7 pushed.",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -11,9 +11,9 @@
   "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "after a week of games",
+    "label": "injury-pipeline-shipped",
     "target": null,
-    "baseline": "2026-10-13T04:16:41+00:00",
+    "baseline": "2026-10-13T14:38:21+00:00",
     "events": [],
     "target_date": null,
     "monitoring": false
