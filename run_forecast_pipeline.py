@@ -32,12 +32,14 @@ BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
 MAX_EXPORT_AGE_MINUTES = 10
 PITCHER_SCRIPT = ROOT / "run_nightly.py"
 MARKETS_SCRIPT = ROOT / "run_game_markets.py"
+INJURY_SCRIPT = ROOT / "run_injury_check.py"
 BOARD_SCRIPT = ROOT / "run_forecast_board.py"
+INJURY_DIR = OUTPUTS_DIR / "injuries"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the atomic MLB forecast pipeline.")
-    parser.add_argument("--slot", required=True, choices=("noon", "afternoon"))
+    parser.add_argument("--slot", required=True, choices=("noon", "afternoon", "evening"))
     parser.add_argument("--date", default=None, help="Screen date YYYY-MM-DD; defaults to today.")
     parser.add_argument("--send-discord", action="store_true")
     parser.add_argument("--force-send", action="store_true")
@@ -133,6 +135,20 @@ def run_pipeline(
         print("[pipeline] no fresh game-market export produced")
         return 1
 
+    print("[pipeline] stage=injuries")
+    injury_proc = _run_stage(
+        [sys.executable, str(INJURY_SCRIPT), "--date", screen], base_env, runner
+    )
+    injury_artifact = INJURY_DIR / f"injury_adjustments_{screen}.json"
+    if injury_proc.returncode != 0 or not injury_artifact.exists():
+        # Degraded, not fatal: the board publishes from the MLBAM slate
+        # alone and flags injury_status visibly. A missing SP cross-check
+        # must never silently cancel the day's board.
+        print("[pipeline] WARNING: injury check failed; board runs without injury adjustments")
+        injury_arg: str | None = None
+    else:
+        injury_arg = str(injury_artifact)
+
     as_of = datetime.now(timezone.utc).isoformat()
     board_cmd = [
         sys.executable,
@@ -152,6 +168,8 @@ def run_pipeline(
         "--run-id",
         f"board-{screen}-{slot}",
     ]
+    if injury_arg:
+        board_cmd.extend(["--injury-adjustments", injury_arg])
     if send_discord:
         board_cmd.append("--send-discord")
     if force_send:

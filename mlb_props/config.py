@@ -317,3 +317,40 @@ def load_settings() -> Settings:
         line_source=os.environ.get("LINE_SOURCE", "fanduel").strip().lower() or "fanduel",
         run_note=(os.environ.get("RUN_NOTE", "") or os.environ.get("DAILY_NOTE", "")).strip(),
     )
+
+
+# ESPN team IDs for the MLB injury feed
+# (https://sports.core.api.espn.com/v2/sports/baseball/leagues/mlb/teams/{id}/injuries).
+# Keyed by repo-canonical abbreviation; see TEAM_ABBR_ALIASES in utils.py.
+TEAM_ABBR_TO_ESPN_ID = {
+    "AZ": 29,
+    "ATH": 11,
+    "ATL": 15,
+    "BAL": 1,
+    "BOS": 2,
+    "CHC": 16,
+    "CWS": 4,
+    "CIN": 17,
+    "CLE": 5,
+    "COL": 27,
+    "DET": 6,
+    "HOU": 18,
+    "KC": 7,
+    "LAA": 3,
+    "LAD": 19,
+    "MIA": 28,
+    "MIL": 8,
+    "MIN": 9,
+    "NYM": 21,
+    "NYY": 10,
+    "PHI": 22,
+    "PIT": 23,
+    "SD": 25,
+    "SF": 26,
+    "SEA": 12,
+    "STL": 24,
+    "TB": 30,
+    "TEX": 13,
+    "TOR": 14,
+    "WSH": 20,
+}

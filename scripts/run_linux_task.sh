@@ -88,7 +88,7 @@ case "$TASK" in
         fi
         COMMAND=("$PYTHON_EXE" grade_forecast_board.py "${GRADE_ARGS[@]}")
         ;;
-    forecast-pipeline-noon|forecast-pipeline-afternoon)
+    forecast-pipeline-noon|forecast-pipeline-afternoon|forecast-pipeline-evening)
         SLOT=${TASK#forecast-pipeline-}
         LOG_FILE="$LOG_DIR/forecast_pipeline_${SLOT}_task.log"
         TIMEOUT=60m

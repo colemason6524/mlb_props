@@ -453,3 +453,26 @@ class ForecastRow:
     recency_shadow_projected_strikeouts: float | None
     recency_shadow_projected_k_rate: float | None
     flags: list[str] = field(default_factory=list)
+
+
+@dataclass
+class TeamInjury:
+    """One entry from the ESPN MLB injury report for a team.
+
+    ``impact_level`` is one of "sp_scratch" (listed starter is out),
+    "key_hitter" (top-4-calibre bat out), or "minor" (bullpen arm /
+    bench bat: noted, never debited).
+    """
+
+    player_name: str
+    player_name_norm: str
+    team: str
+    status: str
+    note: str = ""
+    injury_type: str = ""
+    return_date: str | None = None
+    position: str = ""
+    season_ops: float | None = None
+    season_pa: int | None = None
+    impact_level: str = "minor"
+    offense_debit_runs: float = 0.0

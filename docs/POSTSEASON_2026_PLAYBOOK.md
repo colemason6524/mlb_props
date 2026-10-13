@@ -273,6 +273,47 @@ does not publish, that is a **process incident, not a quiet day**:
 
 ---
 
+## Rule 5 — Injury pipeline (shipped 2026-10-13)
+
+MLB has a real injury feed now: ESPN's per-team injury list, cross-checked
+against ESPN's probable pitchers and the MLBAM slate. It runs as a pipeline
+stage (`run_injury_check.py`) **between game-markets collection and board
+generation**, so adjustments land in the predictions before the board is
+built — never after. Artifact:
+`outputs/injuries/injury_adjustments_<date>.json`.
+
+What moves the model (Cole's priority order):
+
+1. **SP scratch/change (massive).** If the slate's probable SP sits on the
+   OUT injury list, or ESPN's probable disagrees with the slate's, the
+   slate's `probablePitcher` is overridden and the game engine re-projects
+   with the actual starter's last-5 stats. Replacement unknown -> the
+   starter is blanked and the engine's league-average SP fallback applies
+   (strictly better than the wrong arm's stats). The scratched SP's
+   strikeout props are excluded from the board (his lines are void).
+2. **Key hitter OUT (moderate).** An OUT-status (never Day-To-Day) bat with
+   season OPS >= 0.780 over >= 200 PA debits the team's park-adjusted
+   trailing-30g offense (`adj_offense_l30`) by
+   `min(0.60, max(0, OPS - 0.650) x 4.3 x 0.23)` runs — the WNBA
+   `max(0, production - replacement)` shape, scaled to a full-time bat.
+3. **Bullpen arms (minor).** Noted in the board's injury section, never
+   debited.
+
+Timing: lineups post ~3h before first pitch. The old two slots missed
+8pm+ first pitches (lineups ~5pm ET, after the 16:45 run), so a third
+slot was added: **evening 18:45 ET** (`sports-mlb-pipeline-evening.timer`).
+Noon (12:15) covers 1-3pm starts, afternoon (16:45) covers 4:40-7:45pm
+starts, evening covers 7:45pm+ starts.
+
+Failure posture: a dead ESPN feed degrades, it does not kill the board.
+The artifact records `status: degraded`, the board publishes from the
+MLBAM slate alone, and the Discord header + board JSON carry a visible
+`INJURY FEED DEGRADED` flag. Silent ignorance of a known scratch is the
+thing this rule exists to prevent; a loud, labeled fallback is the
+documented compromise.
+
+---
+
 ## Open items
 
 1. ~~Pull 2026-09-23 → 2026-09-27 grade artifacts and re-run the extension so the

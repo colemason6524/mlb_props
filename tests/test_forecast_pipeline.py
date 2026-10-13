@@ -64,6 +64,12 @@ class _FakeRunner:
                 (pipeline.HISTORY_DIR / f"pitcher_props_{self.counter}.json").write_text("{}")
             elif script == "run_game_markets.py":
                 (pipeline.HISTORY_DIR / f"game_markets_{self.counter}.json").write_text("{}")
+            elif script == "run_injury_check.py":
+                screen = command[command.index("--date") + 1]
+                pipeline.INJURY_DIR.mkdir(parents=True, exist_ok=True)
+                (pipeline.INJURY_DIR / f"injury_adjustments_{screen}.json").write_text(
+                    json.dumps({"screen_date": screen, "status": "ok"})
+                )
             elif script == "run_forecast_board.py" and self.board_skip_reason is not None:
                 screen = command[command.index("--date") + 1]
                 slot = command[command.index("--slot") + 1]
@@ -114,12 +120,24 @@ class BoardSkipReasonTests(unittest.TestCase):
 
 class RunPipelineTests(unittest.TestCase):
     def _patched(self, root: Path):
-        return mock.patch.object(pipeline, "HISTORY_DIR", root)
+        injuries = root / "injuries"
+        return (
+            mock.patch.object(pipeline, "HISTORY_DIR", root),
+            mock.patch.object(pipeline, "INJURY_DIR", injuries),
+        )
+
+    def _patched_ctx(self, root: Path):
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        for patcher in self._patched(root):
+            stack.enter_context(patcher)
+        return stack
 
     def test_pitcher_failure_stops_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner(fail_stage="run_nightly.py")
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 code = pipeline.run_pipeline(
                     slot="noon", screen="2026-09-11", send_discord=True, runner=runner
                 )
@@ -129,7 +147,7 @@ class RunPipelineTests(unittest.TestCase):
     def test_missing_fresh_pitcher_export_stops_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner(write_exports=False)
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 code = pipeline.run_pipeline(
                     slot="noon", screen="2026-09-11", send_discord=True, runner=runner
                 )
@@ -139,7 +157,7 @@ class RunPipelineTests(unittest.TestCase):
     def test_market_failure_stops_pipeline_before_board(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner(fail_stage="run_game_markets.py")
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 code = pipeline.run_pipeline(
                     slot="noon", screen="2026-09-11", send_discord=True, runner=runner
                 )
@@ -149,7 +167,7 @@ class RunPipelineTests(unittest.TestCase):
     def test_success_passes_exact_fresh_exports_to_board(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner()
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 code = pipeline.run_pipeline(
                     slot="afternoon",
                     screen="2026-09-11",
@@ -170,13 +188,27 @@ class RunPipelineTests(unittest.TestCase):
             self.assertIn("--run-id board-2026-09-11-afternoon", joined)
             self.assertIn("--pitcher-export", joined)
             self.assertIn("--game-markets-file", joined)
+            self.assertIn("--injury-adjustments", joined)
+            self.assertIn("injury_adjustments_2026-09-11.json", joined)
             self.assertIn("pitcher_props_", joined)
             self.assertIn("game_markets_", joined)
+
+    def test_injury_stage_failure_degrades_without_killing_board(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = _FakeRunner(fail_stage="run_injury_check.py")
+            with self._patched_ctx(Path(tmp)):
+                code = pipeline.run_pipeline(
+                    slot="noon", screen="2026-09-11", send_discord=True, runner=runner
+                )
+            self.assertEqual(code, 0)
+            board_command = runner.commands[-1]
+            self.assertEqual(Path(board_command[1]).name, "run_forecast_board.py")
+            self.assertNotIn("--injury-adjustments", " ".join(board_command))
 
     def test_board_failure_propagates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner(fail_stage="run_forecast_board.py")
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 code = pipeline.run_pipeline(
                     slot="noon", screen="2026-09-11", send_discord=True, runner=runner
                 )
@@ -188,19 +220,22 @@ class RunPipelineTests(unittest.TestCase):
             boards = root / "boards"
             boards.mkdir()
             runner = _FakeRunner(board_skip_reason="no_slate")
-            with self._patched(root), mock.patch.object(pipeline, "BOARD_DIR", boards):
+            with self._patched_ctx(root), mock.patch.object(pipeline, "BOARD_DIR", boards):
                 code = pipeline.run_pipeline(
                     slot="noon", screen="2026-09-28", send_discord=True, runner=runner
                 )
             self.assertEqual(code, 0)
             # Collection still ran; the board reached the skip, not a failure.
-            self.assertEqual(len(runner.commands), 3)
-            self.assertEqual(Path(runner.commands[-1][1]).name, "run_forecast_board.py")
+            self.assertEqual(len(runner.commands), 4)
+            self.assertEqual(
+                [Path(c[1]).name for c in runner.commands],
+                ["run_nightly.py", "run_game_markets.py", "run_injury_check.py", "run_forecast_board.py"],
+            )
 
     def test_python_and_screen_propagate_to_board(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             runner = _FakeRunner()
-            with self._patched(Path(tmp)):
+            with self._patched_ctx(Path(tmp)):
                 pipeline.run_pipeline(
                     slot="noon", screen="2026-09-11", send_discord=False, runner=runner
                 )

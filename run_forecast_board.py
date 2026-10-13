@@ -37,6 +37,13 @@ from mlb_props.forecasting.pitcher_k import (
 )
 from mlb_props.notifiers.discord import send_discord_message
 from mlb_props.run_ledger import record_run
+from mlb_props.injuries import (
+    apply_sp_overrides,
+    injury_notes_for_game,
+    offense_debits,
+    scratched_sp_norms,
+)
+from mlb_props.utils import normalize_name as normalize_player_name
 
 ENGINES_DIR = ROOT / "mlb_props/artifacts"
 BOARD_DIR = OUTPUTS_DIR / "forecast_boards"
@@ -50,7 +57,7 @@ CACHE_RETENTION_DAYS = 400
 DISCORD_CHUNK_LIMIT = 1900
 NO_SLATE = "no_slate"
 START_BUFFER_MINUTES = 10
-SLOT_LABELS = {"noon": "Noon Board", "afternoon": "Afternoon Update"}
+SLOT_LABELS = {"noon": "Noon Board", "afternoon": "Afternoon Update", "evening": "Evening Update"}
 
 
 # ------------------------------------------------------------------ prices
@@ -265,10 +272,22 @@ def recalibrate_pick_prob(recalibrator, family, p_pick):
 # ------------------------------------------------------------- board rows
 
 
-def pitcher_rows(export: dict, engine: PitcherEngineResult) -> list[dict]:
+def pitcher_rows(
+    export: dict,
+    engine: PitcherEngineResult,
+    scratched_sps: set[str] | None = None,
+    filter_stats: dict[str, int] | None = None,
+) -> list[dict]:
     rows = []
+    scratched = scratched_sps or set()
     for cand in export.get("candidates") or []:
         if str(cand.get("prop_type") or "") != "PITCHER_STRIKEOUTS":
+            continue
+        if normalize_player_name(cand.get("subject_name") or "") in scratched:
+            # Listed starter was scratched after lines were collected;
+            # his K props are void, never graded on the wrong arm.
+            if filter_stats is not None:
+                filter_stats["scratched_sp"] = filter_stats.get("scratched_sp", 0) + 1
             continue
         line = cand.get("line")
         proj = cand.get("projected_strikeouts")
@@ -353,6 +372,7 @@ def game_rows(
     as_of: datetime | None = None,
     filter_stats: dict[str, int] | None = None,
     recalibrator: dict | None = None,
+    injury_adjustments: dict | None = None,
 ) -> list[dict]:
     from datetime import date as _date
 
@@ -363,6 +383,10 @@ def game_rows(
     ]
     history = game_data.team_history_map(finals)
     slate = game_data.fetch_slate(screen)
+    if injury_adjustments:
+        n_overridden = apply_sp_overrides(slate, injury_adjustments)
+        if n_overridden:
+            print(f"[board] applied {n_overridden} injury SP override(s) to the slate")
     day_map = {screen: slate}
 
     # latest pre-start capture per game from the markets exports
@@ -395,6 +419,16 @@ def game_rows(
         features = game_data.build_features_pregame(game, day_map, history)
         if features is None:
             continue
+        away_debit, home_debit = offense_debits(injury_adjustments, pk)
+        if away_debit:
+            features.away_side.adj_offense_l30 = max(
+                0.0, features.away_side.adj_offense_l30 - away_debit
+            )
+        if home_debit:
+            features.home_side.adj_offense_l30 = max(
+                0.0, features.home_side.adj_offense_l30 - home_debit
+            )
+        game_injury_notes = injury_notes_for_game(injury_adjustments, pk)
         capture = closing.get(pk, {})
         markets = capture.get("game") or {}
         moneyline = markets.get("moneyline") or {}
@@ -443,6 +477,9 @@ def game_rows(
             "engine_version": forecast.version,
             "mean_home_runs": round(forecast.mean_home_runs, 2),
             "mean_away_runs": round(forecast.mean_away_runs, 2),
+            "injury_debit_home": round(home_debit, 3),
+            "injury_debit_away": round(away_debit, 3),
+            "injury_notes": game_injury_notes,
         })
         if total.get("line") is not None and forecast.p_over is not None:
             total_pick = "over" if forecast.p_over >= (forecast.p_under or 0.0) else "under"
@@ -615,11 +652,19 @@ def group_rows_for_display(sections: dict[str, list[dict]]) -> list[tuple[str, l
     return ordered
 
 
-def render_board_text(screen: str, sections: dict[str, list[dict]], slot: str | None = None) -> str:
+def render_board_text(
+    screen: str,
+    sections: dict[str, list[dict]],
+    slot: str | None = None,
+    injury_status: str | None = None,
+) -> str:
     header = f"MLB Forecast Board - {screen}"
     if slot in SLOT_LABELS:
         header = f"{header} ({SLOT_LABELS[slot]})"
     lines = [header, ""]
+    if injury_status in ("degraded", "missing"):
+        lines.append(f"INJURY FEED {injury_status.upper()}: SP changes and OUT-hitter debits not applied")
+        lines.append("")
     for label, rows in group_rows_for_display(sections):
         lines.append(f"== {label} ({len(rows)}) ==")
         for row in sorted(rows, key=lambda r: r.get("p_pick") or 0.0, reverse=True)[:40]:
@@ -639,6 +684,17 @@ def render_board_text(screen: str, sections: dict[str, list[dict]], slot: str | 
                 f"- {row.get('subject')} | {pick_label}{line_txt}{price_txt} | "
                 f"p={row.get('p_pick'):.0%} | {ev_txt} [{row.get('ev_flag')}]"
             )
+        lines.append("")
+    injury_lines: list[str] = []
+    for rows in sections.values():
+        for row in rows:
+            for note in row.get("injury_notes") or []:
+                entry = f"- {row.get('subject')}: {note}"
+                if entry not in injury_lines:
+                    injury_lines.append(entry)
+    if injury_lines:
+        lines.append("== Injury adjustments ==")
+        lines.extend(injury_lines[:20])
         lines.append("")
     return "\n".join(lines)
 
@@ -669,7 +725,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--game-markets-dir", default=None)
     parser.add_argument("--game-markets-file", action="append", default=None,
                         help="Exact game-market export file(s); repeatable.")
-    parser.add_argument("--slot", choices=("noon", "afternoon"), default=None,
+    parser.add_argument("--injury-adjustments", default=None,
+                        help="Injury adjustments artifact JSON; defaults to "
+                             "outputs/injuries/injury_adjustments_<date>.json when present.")
+    parser.add_argument("--slot", choices=("noon", "afternoon", "evening"), default=None,
                         help="Board revision. Sets the run id and Discord label.")
     parser.add_argument("--as-of", default=None,
                         help="Explicit UTC timestamp; enables started-event filtering.")
@@ -771,6 +830,20 @@ def scheduled_game_count(screen: str) -> int | None:
         return None
 
 
+def load_injury_adjustments(explicit: str | None, screen: str) -> dict | None:
+    """Injury artifact for the screen date, or None when absent/stale."""
+    path = Path(explicit) if explicit else OUTPUTS_DIR / "injuries" / f"injury_adjustments_{screen}.json"
+    try:
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if payload.get("screen_date") != screen:
+        return None
+    return payload
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     pruned = prune_runtime_files()
@@ -786,6 +859,12 @@ def main(argv: list[str] | None = None) -> int:
 
     pitcher_engine = load_pitcher_engine()
     game_engine = None if args.skip_games else load_game_engine()
+    injury_adjustments = load_injury_adjustments(args.injury_adjustments, screen)
+    injury_status = (injury_adjustments or {}).get("status", "missing")
+    if injury_adjustments:
+        print(f"[board] injury adjustments: status={injury_status}")
+    else:
+        print("[board] WARNING: no injury adjustments; SP changes and OUT hitters not applied")
 
     sections: dict[str, list[dict]] = {}
     statuses: dict[str, str] = {}
@@ -807,10 +886,20 @@ def main(argv: list[str] | None = None) -> int:
             if age is None or age > args.max_export_age_minutes:
                 statuses["pitcher_k"] = f"stale_export:{age if age is not None else 'unknown'}"
             else:
-                sections["pitcher_k"] = pitcher_rows(pitcher_export, pitcher_engine)
+                sections["pitcher_k"] = pitcher_rows(
+                    pitcher_export,
+                    pitcher_engine,
+                    scratched_sp_norms(injury_adjustments),
+                    filter_stats,
+                )
                 statuses["pitcher_k"] = "ok"
         else:
-            sections["pitcher_k"] = pitcher_rows(pitcher_export, pitcher_engine)
+            sections["pitcher_k"] = pitcher_rows(
+                pitcher_export,
+                pitcher_engine,
+                scratched_sp_norms(injury_adjustments),
+                filter_stats,
+            )
             statuses["pitcher_k"] = "ok"
         input_meta["pitcher_export"] = {
             "path": str(pitcher_path),
@@ -859,6 +948,7 @@ def main(argv: list[str] | None = None) -> int:
                     as_of=as_of if filter_started else None,
                     filter_stats=filter_stats,
                     recalibrator=load_game_recalibrator(),
+                    injury_adjustments=injury_adjustments,
                 )
                 statuses["game"] = "ok"
             except Exception as exc:
@@ -884,9 +974,14 @@ def main(argv: list[str] | None = None) -> int:
         "statuses": statuses,
         "inputs": input_meta,
         "filter_stats": filter_stats,
+        "injury_status": injury_status,
         "sections": sections,
         "row_count": len(banner_rows),
     }
+    if injury_status in ("degraded", "missing"):
+        capture_warnings.append(
+            f"injury_status={injury_status}; SP changes and OUT-hitter debits not applied"
+        )
     if capture_warnings:
         board["capture_warnings"] = capture_warnings
     # An off day returns every family empty. That is also what a source failure
@@ -971,7 +1066,7 @@ def main(argv: list[str] | None = None) -> int:
     forecast_n = append_jsonl(FORECAST_LEDGER, forecast_rows, ("run_id", "proposition_id"))
     roi_n = append_jsonl(ROI_LEDGER, roi_rows, ("run_id", "proposition_id"))
 
-    text = render_board_text(screen, sections, slot)
+    text = render_board_text(screen, sections, slot, injury_status=injury_status)
     print(text)
     print(f"\nboard rows: {len(banner_rows)} | ledger +{forecast_n} | roi +{roi_n} | statuses {statuses}")
 
