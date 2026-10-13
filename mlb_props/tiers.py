@@ -84,8 +84,16 @@ def core_eligible(item, min_score: int) -> bool:
     return int(getattr(item, "score", -999)) >= min_score and not core_block_reasons(item)
 
 
+# Lean also requires the UNDER side (2026-10-12 selection audit):
+# pitcher OVERs graded 3-18 (-14.60u) across 18 learning reviews.
+# Core already requires UNDER; Lean was letting the toxic OVERs through.
+LEAN_REQUIRES_UNDER = True
+
+
 def lean_eligible(item, lean_min_score: int) -> bool:
     if int(getattr(item, "score", -999)) < lean_min_score:
+        return False
+    if LEAN_REQUIRES_UNDER and getattr(item, "side", "") != "UNDER":
         return False
     edge = side_projection_edge(item)
     flags = set(getattr(item, "flags", []) or [])

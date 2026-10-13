@@ -41,14 +41,17 @@ def _shadow(confidence: str) -> OpportunityShadow:
 def _candidate(
     name: str,
     *,
-    side: str = "OVER",
+    side: str = "UNDER",
     line: float = 5.5,
-    projected: float = 6.8,
+    projected: float | None = None,
     score: int = 4,
     reliability: str = "HIGH",
     projected_outs: float = 18.5,
     projected_batters_faced: float = 24.5,
 ) -> Candidate:
+    if projected is None:
+        # default to +1.3 edge on the given side
+        projected = line - 1.3 if side == "UNDER" else line + 1.3
     return Candidate(
         subject_name=name,
         subject_id=1,
@@ -150,7 +153,10 @@ class PitcherPresentationTests(unittest.TestCase):
         self.assertIn("+1.40", rendered)
         self.assertIn("price-agnostic estimated chance", rendered)
         self.assertIn("calibrated (v1) on a small graded sample", rendered)
-        self.assertLess(rendered.index("Under Watch"), rendered.index("Lean One"))
+        # Lean One (score 4) outranks Under Watch (score 2) on the
+        # capped win_p tiebreak -- both UNDER since the 2026-10-12
+        # selection audit requires UNDER for Lean.
+        self.assertLess(rendered.index("Lean One"), rendered.index("Under Watch"))
 
     def test_discord_ranks_best_available_without_promoting_it_to_core(self) -> None:
         lean = _candidate("Lean One", score=4)
