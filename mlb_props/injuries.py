@@ -342,12 +342,9 @@ def build_adjustments(
                     injuries_out.append(inj.__dict__)
                 if _is_pitcher(inj.position):
                     # Pitchers: the SP case is handled above; relievers are
-                    # noted, never debited.
+                    # tracked but never debited or displayed (noise, not signal).
                     if inj.player_name_norm not in scratched:
                         inj.impact_level = "minor"
-                        entry["notes"].append(
-                            f"Bullpen arm OUT ({team}): {inj.player_name} [{inj.injury_type}]"
-                        )
                     else:
                         inj.impact_level = "sp_scratch"
                     continue

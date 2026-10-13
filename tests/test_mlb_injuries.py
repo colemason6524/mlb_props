@@ -167,7 +167,7 @@ class BuildAdjustmentsTests(unittest.TestCase):
         away_debit, _ = offense_debits(adj, "999")
         self.assertEqual(away_debit, 0.0)
 
-    def test_bullpen_arm_noted_never_debited(self) -> None:
+    def test_bullpen_arm_tracked_never_debited_nor_displayed(self) -> None:
         game = _game()
         injuries = {"TB": [_injury("Setup Man", "TB", "15-Day-IL", "RP")]}
         espn = {("CLE", "TB"): {"away": "Ace Scratched", "home": "Freddy Peralta"}}
@@ -175,7 +175,8 @@ class BuildAdjustmentsTests(unittest.TestCase):
         _, home_debit = offense_debits(adj, "999")
         self.assertEqual(home_debit, 0.0)
         entry = adj["games"]["999"]
-        self.assertTrue(any("Bullpen arm OUT" in n for n in entry["notes"]))
+        # Bullpen arms are tracked but not displayed (noise, not signal).
+        self.assertFalse(any("Bullpen arm OUT" in n for n in entry["notes"]))
         arm = next(i for i in adj["injuries"] if i["player_name"] == "Setup Man")
         self.assertEqual(arm["impact_level"], "minor")
 
