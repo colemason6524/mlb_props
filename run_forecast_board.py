@@ -236,6 +236,29 @@ def load_game_engine() -> GameEngineFit | None:
     )
 
 
+def load_game_recalibrator():
+    payload_path = ENGINES_DIR / "game_recalibrator_v1.json"
+    if not payload_path.exists():
+        return None
+    payload = json.loads(payload_path.read_text())
+    out = {}
+    for fam, spec in payload.get("families", {}).items():
+        cal = IsotonicCalibrator()
+        cal.knots = list(spec["knots"])
+        cal.values = list(spec["values"])
+        out[fam] = cal
+    return out
+
+
+def recalibrate_pick_prob(recalibrator, family, p_pick):
+    if recalibrator is None or p_pick is None:
+        return p_pick
+    cal = recalibrator.get(family)
+    if cal is None:
+        return p_pick
+    return float(cal.predict(p_pick))
+
+
 # ------------------------------------------------------------- board rows
 
 
@@ -326,6 +349,7 @@ def game_rows(
     markets_files: list[Path],
     as_of: datetime | None = None,
     filter_stats: dict[str, int] | None = None,
+    recalibrator: dict | None = None,
 ) -> list[dict]:
     from datetime import date as _date
 
@@ -386,7 +410,9 @@ def game_rows(
 
         ml_pick = "home" if forecast.p_home >= forecast.p_away else "away"
         ml_price = moneyline.get("price_a") if ml_pick == "home" else moneyline.get("price_b")
-        ml_ev = expected_value(forecast.p_home if ml_pick == "home" else forecast.p_away, ml_price)
+        ml_p_raw = forecast.p_home if ml_pick == "home" else forecast.p_away
+        ml_p = recalibrate_pick_prob(recalibrator, "game_ml", ml_p_raw)
+        ml_ev = expected_value(ml_p, ml_price)
         ml_novig_home, ml_novig_away = no_vig_prob(moneyline.get("price_a"), moneyline.get("price_b"))
         ml_market_p = ml_novig_home if ml_pick == "home" else ml_novig_away
         rows.append({
@@ -400,7 +426,8 @@ def game_rows(
             "away_team": away_name,
             "pick": ml_pick,
             "line": None,
-            "p_pick": round(forecast.p_home if ml_pick == "home" else forecast.p_away, 4),
+            "p_pick": round(ml_p, 4),
+            "p_pick_raw": round(ml_p_raw, 4),
             "p_home": round(forecast.p_home, 4),
             "p_away": round(forecast.p_away, 4),
             "price": ml_price,
@@ -466,9 +493,13 @@ def game_rows(
                 else:
                     rl_win, rl_loss = forecast.p_away_cover, forecast.p_home_cover
                 rl_p = rl_win / (rl_win + rl_loss) if (rl_win + rl_loss) > 0 else (forecast.p_home_cover_line if rl_pick == "home_covers" else 1.0 - forecast.p_home_cover_line)
+                rl_p_raw = rl_p
+                rl_p = recalibrate_pick_prob(recalibrator, "game_rl", rl_p)
                 rl_ev = expected_value_with_push(rl_win, rl_loss, rl_price)
             else:
                 rl_p = forecast.p_home_cover_line if rl_pick == "home_covers" else 1.0 - forecast.p_home_cover_line
+                rl_p_raw = rl_p
+                rl_p = recalibrate_pick_prob(recalibrator, "game_rl", rl_p)
                 rl_ev = expected_value(rl_p, rl_price)
             rows.append({
                 "family": "game_rl",
@@ -482,6 +513,7 @@ def game_rows(
                 "pick": rl_pick,
                 "line": spread.get("line"),
                 "p_pick": round(rl_p, 4),
+                "p_pick_raw": round(rl_p_raw, 4),
                 "price": rl_price,
                 "book": markets.get("source"),
                 "source": markets.get("source"),
@@ -823,6 +855,7 @@ def main(argv: list[str] | None = None) -> int:
                     markets_files,
                     as_of=as_of if filter_started else None,
                     filter_stats=filter_stats,
+                    recalibrator=load_game_recalibrator(),
                 )
                 statuses["game"] = "ok"
             except Exception as exc:
