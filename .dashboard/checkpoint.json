@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-13T20:57:09+00:00",
+  "updated_at": "2026-10-14T12:01:25+00:00",
   "status": "observing",
-  "summary": "Injury display fix: bullpen arms no longer listed on board (were noise, zero debit). Key hitter/SP notes unchanged.",
+  "summary": "Statcast fix: morning timer fetched 2026-10-13 as zero rows (transient pybaseball miss) and the empty result was cached permanently (263 pitches lost). Manually re-collected (8 pitchers, 263 pitches). collect_day now re-fetches cached empty days while within 3 days of today (EMPTY_RETRY_DAYS); older empties stay true off-days. 3 new tests, 24 pass. Commit 3b262c8 pushed. Note: dashboard still flags needs-review on the 2026-10-13 grading event (4 decided plays, 2-2, -0.44u; single-game CLE@TB slate, too small for any calibration read).",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -11,9 +11,9 @@
   "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "after a week of games",
+    "label": "statcast empty-cache retry fix",
     "target": null,
-    "baseline": "2026-10-13T20:57:09+00:00",
+    "baseline": "2026-10-14T12:01:25+00:00",
     "events": [],
     "target_date": null,
     "monitoring": false
