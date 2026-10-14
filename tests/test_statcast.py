@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from mlb_props.statcast import (
@@ -124,6 +124,30 @@ class TestPipelineProfile(unittest.TestCase):
             pipe = StatcastPipeline(Path(tmp))
             self.assertIsNone(pipe.pitcher_profile(12345, date(2026, 10, 5)))
 
+
+
+
+class TestEmptyRetryDue(unittest.TestCase):
+    """Cached empty days are re-fetched while fresh (a transient empty fetch
+    must not permanently poison the cache), but old empty days count as
+    true off-days."""
+
+    def _empty(self, pitches):
+        return {"summary": {"pitches": pitches,
+                            "pitchers": 0 if pitches == 0 else 1}}
+
+    def test_recent_empty_is_due(self):
+        day = date.today() - timedelta(days=1)
+        self.assertTrue(StatcastPipeline._empty_retry_due(day, self._empty(0)))
+
+    def test_old_empty_not_due(self):
+        day = date.today() - timedelta(days=30)
+        self.assertFalse(StatcastPipeline._empty_retry_due(day, self._empty(0)))
+
+    def test_recent_nonempty_not_due(self):
+        day = date.today() - timedelta(days=1)
+        self.assertFalse(
+            StatcastPipeline._empty_retry_due(day, self._empty(263)))
 
 if __name__ == "__main__":
     unittest.main()

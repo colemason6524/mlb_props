@@ -39,6 +39,10 @@ STATCAST_PIPELINE_VERSION = "statcast-v1"
 # Trailing window for pitcher profiles, matching the game engine's l30.
 TRAILING_DAYS = 30
 
+# An empty cached day is re-fetched while still this fresh (days). Guards
+# against a transient empty fetch permanently poisoning the cache.
+EMPTY_RETRY_DAYS = 3
+
 # Minimum pitches for a reliable profile. Below this, we shrink to league avg.
 MIN_PITCHES_PROFILE = 100
 
@@ -284,11 +288,24 @@ class StatcastPipeline:
     def _day_key(self, day: date) -> str:
         return f"day-{day.isoformat()}"
 
+    @staticmethod
+    def _empty_retry_due(day: date, cached: dict[str, Any]) -> bool:
+        """True when a cached empty day should be re-fetched instead of served.
+
+        A transient pybaseball failure returns zero rows, and caching that
+        empty result permanently loses the day. Statcast data can also land
+        late. So an empty cached day still within EMPTY_RETRY_DAYS of today
+        is re-fetched; older empty days are treated as true off-days.
+        """
+        summary = cached.get("summary", {})
+        age_days = (date.today() - day).days
+        return summary.get("pitches", 0) == 0 and 0 <= age_days <= EMPTY_RETRY_DAYS
+
     def collect_day(self, day: date) -> dict[str, Any]:
         """Pull one day of Statcast, aggregate per pitcher. Returns summary."""
         key = self._day_key(day)
         cached = self.cache.get(key)
-        if cached is not None:
+        if cached is not None and not self._empty_retry_due(day, cached):
             return {"cached": True, "summary": cached.get("summary", {})}
 
         # Import here so the module loads without pybaseball installed.
