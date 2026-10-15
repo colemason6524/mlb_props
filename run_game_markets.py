@@ -272,11 +272,6 @@ def _run() -> tuple[int, str]:
 
     slate_source = MlbStatsApiSlateSource(shared_cache)
     games = slate_source.fetch_games(settings.screen_date)
-    games = [
-        game
-        for game in games
-        if game.probable_home_pitcher_id is not None and game.probable_away_pitcher_id is not None
-    ]
     print(f"Slate loaded: {len(games)} games for {settings.screen_date.isoformat()}")
 
     refresh = _env_flag("REFRESH_LINES", "true")
