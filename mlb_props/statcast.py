@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -42,6 +43,10 @@ TRAILING_DAYS = 30
 # An empty cached day is re-fetched while still this fresh (days). Guards
 # against a transient empty fetch permanently poisoning the cache.
 EMPTY_RETRY_DAYS = 3
+# Fetch-level retry: Baseball Savant may not have finalized yesterday's
+# data at 07:00 UTC. Retry empty fetches with backoff before caching empty.
+FETCH_MAX_RETRIES = 3
+FETCH_RETRY_DELAYS = [300, 600, 1200]  # 5min, 10min, 20min
 
 # Minimum pitches for a reliable profile. Below this, we shrink to league avg.
 MIN_PITCHES_PROFILE = 100
@@ -314,7 +319,16 @@ class StatcastPipeline:
         import warnings
 
         warnings.filterwarnings("ignore")
-        df = statcast(start_dt=day.isoformat(), end_dt=day.isoformat())
+        df = None
+        for attempt in range(FETCH_MAX_RETRIES + 1):
+            df = statcast(start_dt=day.isoformat(), end_dt=day.isoformat())
+            if df is not None and len(df) > 0:
+                break
+            if attempt < FETCH_MAX_RETRIES:
+                delay = FETCH_RETRY_DELAYS[attempt]
+                print(f"{day.isoformat()}: empty fetch (attempt {attempt + 1}), "
+                      f"retrying in {delay}s...")
+                time.sleep(delay)
         if df is None or len(df) == 0:
             summary = {"date": day.isoformat(), "pitchers": 0, "pitches": 0}
             self.cache.set(key, {"summary": summary, "rows": []})

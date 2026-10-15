@@ -151,3 +151,18 @@ class TestEmptyRetryDue(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFetchRetryConstants(unittest.TestCase):
+    """Fetch-level retry: empty Baseball Savant responses are retried
+    with backoff before caching empty. 07:00 UTC is too early for
+    finalized data (Oct 13/14 2026 incidents)."""
+
+    def test_retry_constants_sane(self):
+        from mlb_props.statcast import FETCH_MAX_RETRIES, FETCH_RETRY_DELAYS
+        self.assertGreaterEqual(FETCH_MAX_RETRIES, 1)
+        self.assertEqual(len(FETCH_RETRY_DELAYS), FETCH_MAX_RETRIES)
+        self.assertTrue(all(d > 0 for d in FETCH_RETRY_DELAYS))
+        self.assertEqual(sorted(FETCH_RETRY_DELAYS), FETCH_RETRY_DELAYS)
+        # Total wait under an hour so the timer job does not hang
+        self.assertLess(sum(FETCH_RETRY_DELAYS), 3600)
