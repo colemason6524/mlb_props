@@ -1606,14 +1606,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         if delivery_already_sent(screen, "grade") and not args.force_send:
-            print(f"ERROR: {screen} recap already delivered; refusing to repost without --force-send")
+            print(f"SKIP: {screen} recap already delivered; skipping repost (use --force-send to override)")
             record_run(
-                outcome="failed",
+                outcome="skipped",
                 task="forecast_board_grade",
                 message="recap already delivered",
                 screen_date=screen,
             )
-            return 3
+            return 0
         for chunk in chunk_messages(recap):
             send = send_discord_message(webhook, chunk)
             if send.ok:

@@ -1078,10 +1078,10 @@ def main(argv: list[str] | None = None) -> int:
             record_run(outcome="failed", task="forecast_board", message="missing webhook", screen_date=screen)
             return 2
         if delivery_already_sent(screen, slot) and not args.force_send:
-            message = f"{screen} {slot} already delivered; refusing to repost without --force-send"
-            print(f"ERROR: {message}")
-            record_run(outcome="failed", task="forecast_board", message=message, screen_date=screen)
-            return 3
+            message = f"{screen} {slot} already delivered; skipping repost (use --force-send to override)"
+            print(f"SKIP: {message}")
+            record_run(outcome="skipped", task="forecast_board", message=message, screen_date=screen)
+            return 0
         for chunk in chunk_messages(text):
             result = send_discord_message(webhook, chunk)
             if result.ok:
