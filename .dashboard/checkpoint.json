@@ -1,22 +1,22 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-16T23:58:33+00:00",
+  "updated_at": "2026-10-18T12:39:56+00:00",
   "status": "observing",
-  "summary": "Evening service fix dbc7116 deployed: run_forecast_board.py and grade_forecast_board.py now record benign dedupe as skipped with exit 0 (was exit 3 / appeared failed in systemd), retaining double-post protection. 109 related tests passed; 6:45pm ET evening timer armed.",
+  "summary": "Morning check-in 2026-10-18: reviewed 10:00 UTC grade (screen 2026-10-17: 3 decided, 1-2, -1.13u, postseason; joins 3/3; delivery sent, exit 0). Already-delivered dedupe question CLOSED: 0/skipped is correct design - last night NHL rebuild posted exactly once because the already-delivered skip fired (sent=[0]); exit 3/failed would raise false dashboard failure flags. No MLB dedupe event has fired (SKIP lines are all no-games cases). Statcast: re-ran 2026-10-16 backfill (4 attempts, still 0 pitches) then corrected the premise: NLCS G4 (Brewers 6, Dodgers 4) was played Oct 15, not Oct 16; Oct 15 cache already holds both games; Oct 16 had no MLB games (TB@CLE Wild Card postponed to Oct 17, data cached). Nothing missing. TimeoutStartSec 1200->5400 fix is live-file-only, not git-tracked (recommendation to Cole: git-track the unit).",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
-  "deployed": true,
-  "git_commit": "dbc7116",
+  "deployed": false,
+  "git_commit": "",
   "check_back": {
     "kind": "grade_event",
-    "label": "already-delivered dedupe exits 0/skipped instead of 3/failed",
+    "label": "double-post watch: already-delivered dedupe",
     "target": null,
-    "baseline": "2026-10-16T23:58:33+00:00",
+    "baseline": "2026-10-18T12:39:56+00:00",
     "events": [],
     "target_date": null,
-    "monitoring": false
+    "monitoring": true
   },
   "docs": [
     {
