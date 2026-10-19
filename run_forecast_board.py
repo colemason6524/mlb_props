@@ -56,6 +56,7 @@ BOARD_RETENTION_DAYS = 45
 CACHE_RETENTION_DAYS = 400
 DISCORD_CHUNK_LIMIT = 1900
 NO_SLATE = "no_slate"
+NO_PREGAME_REMAINING = "no_pregame_remaining"
 START_BUFFER_MINUTES = 10
 SLOT_LABELS = {"noon": "Noon Board", "afternoon": "Afternoon Update", "evening": "Evening Update"}
 
@@ -816,6 +817,27 @@ def only_empty_families(family_errors: list[str]) -> bool:
     return bool(family_errors) and all(error.endswith("=empty") for error in family_errors)
 
 
+def slate_pregame_remaining(screen: str) -> tuple[int | None, int]:
+    """Scheduled games vs games still pregame for the screen date.
+
+    Returns (scheduled, pregame) counts. scheduled is None when the schedule
+    cannot be read; None is not zero, so an unreachable schedule keeps the
+    board failing closed rather than letting a real slate be skipped as an
+    off day. Pregame means the MLB schedule state is not Live or Final.
+    """
+    live_or_final = {"Live", "Final"}
+    try:
+        slate = game_data.fetch_slate(screen)
+    except Exception as exc:
+        print(f"schedule lookup failed for {screen}: {type(exc).__name__}: {exc}")
+        return None, 0
+    pregame = sum(
+        1 for game in slate
+        if (game.get("status") or {}).get("abstractGameState") not in live_or_final
+    )
+    return len(slate), pregame
+
+
 def scheduled_game_count(screen: str) -> int | None:
     """How many games MLB schedules for the screen date.
 
@@ -823,11 +845,8 @@ def scheduled_game_count(screen: str) -> int | None:
     unreachable schedule must keep the board failing closed rather than let a
     real slate be skipped as an off day.
     """
-    try:
-        return len(game_data.fetch_slate(screen))
-    except Exception as exc:
-        print(f"schedule lookup failed for {screen}: {type(exc).__name__}: {exc}")
-        return None
+    scheduled, _ = slate_pregame_remaining(screen)
+    return scheduled
 
 
 def load_injury_adjustments(explicit: str | None, screen: str) -> dict | None:
@@ -986,10 +1005,18 @@ def main(argv: list[str] | None = None) -> int:
         board["capture_warnings"] = capture_warnings
     # An off day returns every family empty. That is also what a source failure
     # returns, so ask the schedule which one this is before deciding: zero
-    # scheduled games is a deliberate skip, anything else still fails closed.
+    # scheduled games is a deliberate skip, and a slate whose every game is
+    # already Live/Final is a deliberate no-publish too (no pregame edge
+    # remains to forecast). Anything else still fails closed.
     family_errors = required_family_errors(statuses, sections)
-    scheduled = scheduled_game_count(screen) if only_empty_families(family_errors) else None
-    skip_reason = NO_SLATE if scheduled == 0 else None
+    slate_counts = slate_pregame_remaining(screen) if only_empty_families(family_errors) else (None, 0)
+    scheduled, pregame = slate_counts
+    if scheduled == 0:
+        skip_reason = NO_SLATE
+    elif scheduled and scheduled > 0 and pregame == 0:
+        skip_reason = NO_PREGAME_REMAINING
+    else:
+        skip_reason = None
     if skip_reason:
         board["skip_reason"] = skip_reason
 
@@ -997,8 +1024,17 @@ def main(argv: list[str] | None = None) -> int:
     board_path = BOARD_DIR / board_filename(screen, slot)
     board_path.write_text(json.dumps(board, indent=1, default=str))
 
-    if skip_reason:
+    if skip_reason == NO_SLATE:
         message = f"no games scheduled for {screen}; board skipped ({', '.join(family_errors)})"
+        print(f"SKIP: {message}")
+        record_run(outcome="skipped", task="forecast_board", message=message, screen_date=screen)
+        return 0
+
+    if skip_reason == NO_PREGAME_REMAINING:
+        message = (
+            f"all {scheduled} scheduled game(s) for {screen} already started; "
+            f"board skipped ({', '.join(family_errors)})"
+        )
         print(f"SKIP: {message}")
         record_run(outcome="skipped", task="forecast_board", message=message, screen_date=screen)
         return 0

@@ -24,6 +24,7 @@ from run_forecast_board import (
     render_board_text,
     required_family_errors,
     scheduled_game_count,
+    slate_pregame_remaining,
     start_times_from_pitcher_export,
 )
 
@@ -221,11 +222,40 @@ class OffDaySkipTests(unittest.TestCase):
         with mock.patch.object(game_data, "fetch_slate", side_effect=RuntimeError("offline")):
             self.assertIsNone(scheduled_game_count("2026-09-28"))
 
-    def _run_board(self, scheduled: int | None, family_errors: list[str], run_id: str, slot: str = "noon"):
+    def test_slate_pregame_remaining_separates_live_from_pregame(self) -> None:
+        from mlb_props.forecasting import game_data
         import run_forecast_board as board
 
+        slate = [
+            {"gamePk": 1, "status": {"abstractGameState": "Preview"}},
+            {"gamePk": 2, "status": {"abstractGameState": "Live"}},
+            {"gamePk": 3, "status": {"abstractGameState": "Final"}},
+        ]
+        with mock.patch.object(game_data, "fetch_slate", return_value=slate):
+            self.assertEqual(slate_pregame_remaining("2026-10-18"), (3, 1))
+        with mock.patch.object(
+            game_data, "fetch_slate", return_value=[{"gamePk": 9, "status": {"abstractGameState": "Live"}}]
+        ):
+            self.assertEqual(slate_pregame_remaining("2026-10-18"), (1, 0))
+        with mock.patch.object(game_data, "fetch_slate", return_value=[]):
+            self.assertEqual(slate_pregame_remaining("2026-10-18"), (0, 0))
+        with mock.patch.object(game_data, "fetch_slate", side_effect=RuntimeError("offline")):
+            self.assertEqual(slate_pregame_remaining("2026-10-18"), (None, 0))
+
+    def _run_board(
+        self,
+        scheduled: int | None,
+        family_errors: list[str],
+        run_id: str,
+        slot: str = "noon",
+        pregame: int | None = None,
+    ):
+        import run_forecast_board as board
+
+        slate_counts = (scheduled, scheduled if pregame is None else pregame)
         with mock.patch.object(board, "required_family_errors", return_value=family_errors), \
                 mock.patch.object(board, "scheduled_game_count", return_value=scheduled), \
+                mock.patch.object(board, "slate_pregame_remaining", return_value=slate_counts), \
                 mock.patch.object(board, "append_jsonl") as appended, \
                 mock.patch.object(board, "send_discord_message") as sent, \
                 mock.patch.object(board, "record_run") as recorded:
@@ -262,6 +292,33 @@ class OffDaySkipTests(unittest.TestCase):
     def test_scheduled_games_with_empty_families_still_fail_closed(self) -> None:
         code, recorded, appended, sent = self._run_board(
             7, ["pitcher_k=empty", "game=empty"], "test-slate-empty-fail"
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(recorded.call_args.kwargs["outcome"], "failed")
+        appended.assert_not_called()
+        sent.assert_not_called()
+
+    def test_live_slate_skips_without_publishing(self) -> None:
+        import run_forecast_board as board
+
+        code, recorded, appended, sent = self._run_board(
+            1, ["pitcher_k=empty", "game=empty"], "test-live-slate-skip", pregame=0
+        )
+        self.assertEqual(code, 0)
+        kwargs = recorded.call_args.kwargs
+        self.assertEqual(kwargs["outcome"], "skipped")
+        self.assertIn("already started", kwargs["message"])
+        appended.assert_not_called()
+        sent.assert_not_called()
+        payload = json.loads(
+            (board.BOARD_DIR / "forecast_board_2999-01-01_noon.json").read_text()
+        )
+        self.assertEqual(payload["skip_reason"], "no_pregame_remaining")
+        self.assertEqual(payload["row_count"], 0)
+
+    def test_pregame_slate_with_empty_families_still_fails_closed(self) -> None:
+        code, recorded, appended, sent = self._run_board(
+            1, ["pitcher_k=empty", "game=empty"], "test-pregame-slate-fail", pregame=1
         )
         self.assertEqual(code, 1)
         self.assertEqual(recorded.call_args.kwargs["outcome"], "failed")
