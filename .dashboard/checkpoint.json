@@ -1,22 +1,22 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-18T12:39:56+00:00",
+  "updated_at": "2026-10-19T00:06:09+00:00",
   "status": "observing",
-  "summary": "Morning check-in 2026-10-18: reviewed 10:00 UTC grade (screen 2026-10-17: 3 decided, 1-2, -1.13u, postseason; joins 3/3; delivery sent, exit 0). Already-delivered dedupe question CLOSED: 0/skipped is correct design - last night NHL rebuild posted exactly once because the already-delivered skip fired (sent=[0]); exit 3/failed would raise false dashboard failure flags. No MLB dedupe event has fired (SKIP lines are all no-games cases). Statcast: re-ran 2026-10-16 backfill (4 attempts, still 0 pitches) then corrected the premise: NLCS G4 (Brewers 6, Dodgers 4) was played Oct 15, not Oct 16; Oct 15 cache already holds both games; Oct 16 had no MLB games (TB@CLE Wild Card postponed to Oct 17, data cached). Nothing missing. TimeoutStartSec 1200->5400 fix is live-file-only, not git-tracked (recommendation to Cole: git-track the unit).",
+  "summary": "Evening check-in 2026-10-18 ~20:00 ET: all pipelines healthy. Evening forecast pipeline exited 1 at 22:45 UTC but correctly \u2014 TB@CLE (WC G2) was live by then (Action Network fresh, pregame_games=0; Bovada 404 on the pregame event), so the board guard refused to publish with no pregame markets. Afternoon board (16:45 ET) published clean with 1/1 market coverage: Messick under 4.5 +104, CLE ML +106, CLE +1.5 -160 playable; Under 6.5 no_value. No user impact; failure is noisy signaling only. Candidate refinement (backlog): distinguish game-live skip (exit 0) from pregame data-outage (keep exit 1) so a deliberate no-publish does not flag as failed \u2014 same class as the Oct 16 dedupe-skip fix dbc7116, needs the game-state nuance to avoid masking real outages.",
   "experiment": null,
   "watching_for": null,
-  "next_action": null,
+  "next_action": "None tonight; consider the game-live-vs-outage exit-code refinement as a future small fleet task if the noisy failure recurs.",
   "deployed": false,
   "git_commit": "",
   "check_back": {
-    "kind": "grade_event",
-    "label": "double-post watch: already-delivered dedupe",
-    "target": null,
-    "baseline": "2026-10-18T12:39:56+00:00",
+    "kind": "calendar",
+    "label": "evening check-in 2026-10-18",
+    "target": 1,
+    "baseline": "2026-10-19T00:06:09+00:00",
     "events": [],
     "target_date": null,
-    "monitoring": true
+    "monitoring": false
   },
   "docs": [
     {
