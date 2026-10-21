@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "project_id": "mlb_props",
-  "updated_at": "2026-10-21T00:16:18+00:00",
+  "updated_at": "2026-10-21T11:58:17+00:00",
   "status": "observing",
-  "summary": "Evening-fix check-back closed: no_pregame_remaining fix (1b860f7) verified per diary 2fd5658 with 35 tests; tonight 22:45 UTC evening pipeline ran exit 0 and finished cleanly. Statcast timer ran 12:00 UTC with fresh aggregates; 10:00 UTC grade ran.",
+  "summary": "Evening-fix check-back closed: no_pregame_remaining fix (1b860f7) verified per diary 2fd5658 with 35 tests; 2026-10-20 22:45 UTC evening pipeline exit 0, statcast + grade runs clean. Marking monitoring so the stale due flag clears.",
   "experiment": null,
   "watching_for": null,
   "next_action": null,
@@ -13,10 +13,10 @@
     "kind": "calendar",
     "label": "evening-fix-verify-tonight",
     "target": 1,
-    "baseline": "2026-10-21T00:16:18+00:00",
+    "baseline": "2026-10-21T11:58:17+00:00",
     "events": [],
     "target_date": null,
-    "monitoring": false
+    "monitoring": true
   },
   "docs": [
     {
