@@ -106,23 +106,30 @@ class SlateEventSlugTest(unittest.TestCase):
         return int((noon + dt.timedelta(hours=hours_after_noon)).timestamp() * 1000)
 
     def test_matches_slate_date_and_teams(self) -> None:
+        # date-rot guard: the slate date is the ET date of the start time, which is
+        # not date.today() on a UTC host; derive both the link and the screen date from ET
+        import datetime as dt
+        from zoneinfo import ZoneInfo
+
+        eastern_today = dt.datetime.now(ZoneInfo("America/New_York")).date()
+        slate = eastern_today.strftime("%Y%m%d")
         payload = [
             {
                 "events": [
                     {
                         "description": "Minnesota Twins @ Detroit Tigers",
-                        "link": "/baseball/mlb/minnesota-twins-detroit-tigers-202609091310",
+                        "link": f"/baseball/mlb/minnesota-twins-detroit-tigers-{slate}1310",
                         "startTime": self._et_ms(1),
                     },
                     {
                         "description": "St. Louis Cardinals @ San Francisco Giants",
-                        "link": "/baseball/mlb/st-louis-cardinals-san-francisco-giants-202609091645",
+                        "link": f"/baseball/mlb/st-louis-cardinals-san-francisco-giants-{slate}1645",
                         "startTime": self._et_ms(2),
                     },
                 ]
             }
         ]
-        slugs, diag = _slate_event_slugs(payload, date.today())
+        slugs, diag = _slate_event_slugs(payload, eastern_today)
         self.assertEqual(len(slugs), 2, diag)
         self.assertIn(
             ("MIN", "DET"),

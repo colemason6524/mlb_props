@@ -117,11 +117,18 @@ def grade_run_line(pick: str, line: float, home_score: int, away_score: int) -> 
 
 
 def settle_units(result: str, price: int | None) -> float | None:
+    """Units for a settled row, or None when no price means no stake.
+
+    A row without a price is not bettable: a WIN already returns None, and a
+    LOSS must too. Returning -1.0 for an unpriced LOSS booked a phantom stake
+    (10 game_ml losses, -10.0u, in the 2026 regular season) in every consumer
+    that filters on ``units is not None``.
+    """
     if result == WIN:
         payout = american_payout(price)
         return payout if payout is not None else None
     if result == LOSS:
-        return -1.0
+        return -1.0 if price is not None else None
     if result in (PUSH, VOID):
         return 0.0
     return None
@@ -1098,6 +1105,15 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
     result = {
         "screen_date": screen,
         "era": evidence_era(screen),
+        "view_notes": {
+            "latest_summary": (
+                "newest revision of this screen date only (later runs supersede earlier "
+                "ones); per-date, not a season record"
+            ),
+            "canonical": "one row per proposition_id for this screen date; the per-date record",
+            "units": "units are defined only when price is not None; unpriced rows carry no stake",
+            "season_record": "sum canonical across screen dates for a season figure",
+        },
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "api_error": api_error,
         "latest_run_id": latest,
@@ -1125,7 +1141,7 @@ def grade_screen(screen: str, client: MlbClient | None = None) -> dict:
 def _bucket_stats(rows: list[dict]) -> dict:
     decided = [r for r in rows if r.get("result") in (WIN, LOSS)]
     wins = sum(r["result"] == WIN for r in decided)
-    priced = [r for r in decided if r.get("units") is not None]
+    priced = [r for r in decided if r.get("price") is not None]
     units = sum(r.get("units") or 0.0 for r in priced)
     return {
         "n": len(decided),

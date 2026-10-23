@@ -445,7 +445,7 @@ def logloss(rows, prob_key):
 def summarize(rows):
     decided = [r for r in rows if r["result"] in ("WIN", "LOSS")]
     wins = sum(r["result"] == "WIN" for r in decided)
-    priced = [r for r in decided if r.get("units") is not None]
+    priced = [r for r in decided if r.get("price") is not None]
     units = sum(r["units"] or 0.0 for r in priced)
     return {
         "n": len(decided),
@@ -724,7 +724,7 @@ def main():
         bucket = taxonomy[f"{result_bucket}:{bucket_name}"]
         bucket["n"] += 1
         bucket["wins"] += r["result"] == "WIN"
-        if r.get("units") is not None:
+        if r.get("price") is not None:
             bucket["units"] += r["units"]
             bucket["priced"] += 1
     metrics["pitcher_taxonomy"] = {
@@ -746,7 +746,7 @@ def main():
             g = groups[keyfn(r)]
             g["n"] += 1
             g["wins"] += r["result"] == "WIN"
-            if r.get("units") is not None:
+            if r.get("price") is not None:
                 g["units"] += r["units"]
                 g["priced"] += 1
         return {k: {"n": v["n"], "wins": v["wins"], "hit": round(v["wins"] / v["n"], 3),
@@ -792,7 +792,7 @@ def main():
             g = groups[info.get("status")]
             g["n"] += 1
             g["wins"] += r["result"] == "WIN"
-            if r.get("units") is not None:
+            if r.get("price") is not None:
                 g["units"] += r["units"]
                 g["priced"] += 1
         return {k: {"n": v["n"], "wins": v["wins"], "hit": round(v["wins"] / v["n"], 3),

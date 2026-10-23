@@ -48,6 +48,8 @@ class PureGraderTests(unittest.TestCase):
         self.assertEqual(grade.settle_units(grade.VOID, -110), 0.0)
         self.assertIsNone(grade.settle_units(grade.PENDING, -110))
         self.assertIsNone(grade.settle_units(grade.WIN, None))
+        # an unpriced LOSS carries no stake either (2026 unpriced game_ml phantom losses)
+        self.assertIsNone(grade.settle_units(grade.LOSS, None))
 
     def test_match_key_strips_accents_and_separators(self) -> None:
         self.assertEqual(grade.match_key("José Soriano"), "josesoriano")
@@ -436,6 +438,28 @@ class SummaryTests(unittest.TestCase):
         roi = grade.roi_summary(rows)
         self.assertEqual(roi["plays"], 2)
         self.assertAlmostEqual(roi["units"], 100 / 110 - 1.0, places=3)
+
+    def test_unpriced_loss_books_no_units(self) -> None:
+        graded = {"result": grade.LOSS, "units": None}
+        self.assertIsNone(graded["units"])
+        rows = [
+            {"price": -110, "result": grade.LOSS, "units": -1.0},
+            {"price": None, "result": grade.LOSS, "units": grade.settle_units(grade.LOSS, None)},
+        ]
+        stats = grade._bucket_stats(rows)
+        self.assertEqual(stats["n"], 2)
+        self.assertEqual(stats["losses"], 2)
+        self.assertAlmostEqual(stats["units"], -1.0, places=3)
+        # the unpriced loss is excluded from the denominator-based stake total
+        self.assertAlmostEqual(grade.roi_summary(rows)["units"], -1.0, places=3)
+
+    def test_bucket_stats_prices_on_price_not_units(self) -> None:
+        # historical artifacts can carry units=-1.0 with price None; the stake
+        # predicate must be the price, not the presence of units
+        rows = [{"price": None, "result": grade.LOSS, "units": -1.0}]
+        stats = grade._bucket_stats(rows)
+        self.assertEqual(stats["n"], 1)
+        self.assertAlmostEqual(stats["units"], 0.0, places=3)
 
 
 class LatestAndSlotTests(unittest.TestCase):

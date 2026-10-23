@@ -213,6 +213,20 @@ def build() -> dict:
         dup_finals[(r.get("screen_date"), r.get("proposition_id"))].append(r)
     dup_rows = {k: v for k, v in dup_finals.items() if len(v) > 1}
 
+    def units_basis(rows: list[dict]) -> dict:
+        decided = [r for r in rows if r.get("result") in FINALS]
+        old = [r for r in decided if r.get("units") is not None]
+        new = [r for r in decided if r.get("price") is not None]
+        old_units = sum(float(r.get("units") or 0.0) for r in old)
+        new_units = sum(float(r.get("units") or 0.0) for r in new)
+        return {
+            "units_is_not_none_count": len(old),
+            "units_is_not_none_units": round(old_units, 3),
+            "price_is_not_none_count": len(new),
+            "price_is_not_none_units": round(new_units, 3),
+            "delta_units": round(new_units - old_units, 3),
+        }
+
     result = {
         "ledger_rows": len(ledger),
         "ledger_dates": sorted(by_date),
@@ -222,6 +236,10 @@ def build() -> dict:
         "season_canonical": split(combined, "full-season canonical"),
         "legacy_only": split(legacy, "legacy-date canonical"),
         "latest_revision": latest_entry,
+        "units_basis": {
+            "season_canonical": units_basis(combined),
+            "published_canonical": units_basis(published),
+        },
         "denominators": {
             "phantom_units_rows": len(phantom),
             "phantom_units_total": round(sum(float(r["units"] or 0.0) for r in phantom), 3),
@@ -264,6 +282,13 @@ def main(argv: list[str]) -> int:
     print(f"  raw-ledger duplicate finals: {den['raw_ledger_duplicate_finals']} keys / "
           f"{den['raw_ledger_duplicate_extra_rows']} extra rows / "
           f"{den['raw_ledger_duplicate_extra_units']:+.3f}u")
+    for name, basis in data["units_basis"].items():
+        print(
+            f"  stake basis [{name}]: units is not None -> {basis['units_is_not_none_count']} rows "
+            f"{basis['units_is_not_none_units']:+.3f}u | price is not None -> "
+            f"{basis['price_is_not_none_count']} rows {basis['price_is_not_none_units']:+.3f}u "
+            f"| phantom delta {basis['delta_units']:+.3f}u"
+        )
     return 0
 
 
