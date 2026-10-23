@@ -1,0 +1,625 @@
+{
+  "schema_version": 1,
+  "ssh": {
+    "identity": "/Users/colemason/Downloads/RunThemScripts_key.pem",
+    "target": "azureuser@130.131.0.6"
+  },
+  "environments": {
+    "vm": {
+      "local": true,
+      "repo_root": "/home/azureuser"
+    }
+  },
+  "defaults": {
+    "timezone": "America/Detroit",
+    "checkpoint_path": ".dashboard/checkpoint.json",
+    "diary_source": "git",
+    "diary_remote": "origin"
+  },
+  "projects": [
+    {
+      "id": "cfb_props",
+      "name": "CFB Props",
+      "sport": "college football",
+      "mac_path": "/Users/colemason/cfb_props",
+      "vm_path": "cfb_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Handoff",
+          "path": "docs/HANDOFF.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        },
+        {
+          "label": "Plan / findings",
+          "path": "docs/PLAN.md"
+        },
+        {
+          "label": "Product contract",
+          "path": "docs/PRODUCT_CONTRACT.md"
+        }
+      ],
+      "timers": [
+        "sports-cfb-forecast.timer",
+        "sports-cfb-forecast-pm.timer",
+        "sports-cfb-grade.timer"
+      ],
+      "services": [
+        "sports-cfb-forecast.service",
+        "sports-cfb-forecast-pm.service",
+        "sports-cfb-grade.service"
+      ],
+      "run_status": null,
+      "reports": [
+        {
+          "key": "forecast_grade",
+          "label": "Forecast grade (active cohort)",
+          "glob": "outputs/forecast_backtests/grade_forecast_*.txt",
+          "kind": "cfb_grade",
+          "active": true,
+          "max_bytes": 12000,
+          "note": "Forecast-first cohort. Do NOT use outputs/backtests/grade_* (legacy)."
+        },
+        {
+          "key": "forecast_snapshot",
+          "label": "Latest forecast snapshot",
+          "glob": "outputs/forecast_history/cfb_forecast_*.json",
+          "kind": "cfb_snapshot",
+          "fields": [
+            "model_version",
+            "summary"
+          ]
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/forecast_backtests/grade_forecast_*.txt",
+        "label": "Sunday forecast grade"
+      },
+      "slate": {
+        "type": "json_list_dates",
+        "glob": "outputs/forecast_history/cfb_forecast_*.json",
+        "list_field": "forecasts",
+        "date_field": "kickoff_utc"
+      },
+      "notes": "Active grades are outputs/forecast_backtests/. outputs/backtests/grade_* is the frozen legacy price-screened cohort."
+    },
+    {
+      "id": "horses",
+      "name": "Horses",
+      "sport": "horse racing",
+      "mac_path": "/Users/colemason/horses",
+      "vm_path": "horses",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Current handoff",
+          "path": "docs/current_handoff.md"
+        },
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Evaluation contract",
+          "path": "docs/evaluation_contract.md"
+        }
+      ],
+      "timers": [
+        "sports-horses-pre-race.timer",
+        "sports-horses-odds.timer",
+        "sports-horses-coverage.timer",
+        "sports-horses-archive.timer",
+        "sports-horses-nightly.timer",
+        "sports-horses-sl-results.timer"
+      ],
+      "services": [
+        "sports-horses-pre-race.service",
+        "sports-horses-odds.service",
+        "sports-horses-pre-race-score.service",
+        "sports-horses-performance.service",
+        "sports-horses-coverage.service",
+        "sports-horses-archive.service",
+        "sports-horses-nightly.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": null,
+      "slate": null,
+      "notes": "Collection-only (Phase 3 gate pending). Dashboard shows race-day collection stats below.",
+      "paused_timers": [
+        "sports-horses-pre-race.timer"
+      ],
+      "horses_summary": {
+        "data_dir": "data/processed"
+      }
+    },
+    {
+      "id": "mlb_props",
+      "name": "MLB Props",
+      "sport": "baseball",
+      "mac_path": "/Users/colemason/mlb_props",
+      "vm_path": "mlb_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Azure VM operations",
+          "path": "docs/AZURE_VM_OPERATIONS.md"
+        },
+        {
+          "label": "Pitcher props handoff",
+          "path": "docs/PITCHER_PROPS_HANDOFF.md"
+        },
+        {
+          "label": "Hot hits handoff",
+          "path": "docs/HOT_HITS_HANDOFF.md"
+        }
+      ],
+      "timers": [
+        "sports-mlb-pipeline-noon.timer",
+        "sports-mlb-pipeline-afternoon.timer",
+        "sports-mlb-grade-board.timer",
+        "sports-mlb-pipeline-evening.timer",
+        "sports-mlb-statcast.timer"
+      ],
+      "services": [
+        "sports-mlb-pipeline-noon.service",
+        "sports-mlb-pipeline-afternoon.service",
+        "sports-mlb-grade-board.service"
+      ],
+      "run_status": "outputs/run_status.json",
+      "reports": [
+        {
+          "key": "learning_review",
+          "label": "Daily learning review",
+          "glob": "outputs/grades/learning_review_*.md",
+          "kind": "mlb_learning_review",
+          "active": true,
+          "max_bytes": 20000
+        },
+        {
+          "key": "grade_board",
+          "label": "Graded board",
+          "glob": "outputs/grades/forecast_board_*.json",
+          "kind": "mlb_grade",
+          "fields": [
+            "screen_date",
+            "latest_summary.totals",
+            "canonical.summary.totals",
+            "canonical.roi"
+          ],
+          "note": "Per-date view. latest_roi (newest revision of a single date) was removed from the season path: it is not a season figure. See season_record."
+        },
+        {
+          "key": "season_record",
+          "label": "Season record (canonical, price-predicated)",
+          "glob": "outputs/grades/forecast_board_*.json",
+          "kind": "mlb_season",
+          "active": true,
+          "note": "Sum of every screen date's canonical block. Legacy latest_roi glob removed."
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/grades/learning_review_*.md",
+        "label": "Daily grade + learning review"
+      },
+      "slate": {
+        "type": "json_files_dates",
+        "glob": "outputs/grades/forecast_board_*.json",
+        "date_field": "screen_date",
+        "games_path": "latest_summary.totals"
+      },
+      "notes": "On-demand `systemctl` results plus outputs/run_status.json and daily grade artifacts."
+    },
+    {
+      "id": "nba_stats",
+      "name": "NBA Stats",
+      "sport": "basketball",
+      "mac_path": "/Users/colemason/nba_stats",
+      "vm_path": "nba_stats",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Handoff (2026-08-25)",
+          "path": "docs/HANDOFF_2026-08-25.md"
+        }
+      ],
+      "timers": [
+        "sports-nba-board.timer",
+        "sports-nba-grade.timer"
+      ],
+      "services": [
+        "sports-nba-board.service",
+        "sports-nba-grade.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": null,
+      "slate": {
+        "type": "json_files_dates",
+        "glob": "outputs/player_props/boards/board_*.json",
+        "games_path": "n_rows",
+        "date_field": "game_date"
+      },
+      "notes": "Preseason observation mode. Empty offseason boards are expected, not failure. No verified report source configured yet."
+    },
+    {
+      "id": "nfl_props",
+      "name": "NFL Props",
+      "sport": "football",
+      "mac_path": "/Users/colemason/nfl_props",
+      "vm_path": "nfl_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Handoff",
+          "path": "docs/HANDOFF.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        },
+        {
+          "label": "Week 4 grade diagnostics",
+          "path": "docs/WEEK4_GRADE_DIAGNOSTICS.md"
+        },
+        {
+          "label": "Plan",
+          "path": "docs/PLAN.md"
+        }
+      ],
+      "timers": [
+        "sports-nfl-board.timer",
+        "sports-nfl-grade.timer",
+        "sports-nfl-weekly-grade.timer",
+        "sports-nfl-mnf-refresh.timer",
+        "sports-nfl-wave2.timer"
+      ],
+      "services": [
+        "sports-nfl-board.service",
+        "sports-nfl-grade.service",
+        "sports-nfl-weekly-grade.service"
+      ],
+      "run_status": null,
+      "reports": [
+        {
+          "key": "forecast_grade",
+          "label": "Latest weekly forecast grade",
+          "glob": "outputs/forecast_backtests/grade_weekly_*.txt",
+          "kind": "text",
+          "active": true,
+          "note": "Current report may predate the grading-v2 rollout; the next weekly JSON artifact is the first to include the new diagnostics."
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/forecast_backtests/grade_weekly_*.json",
+        "label": "Weekly grade with forecast diagnostics"
+      },
+      "slate": null,
+      "notes": "Forecast-first NFL board; grading-v2 diagnostics are deployed. The first artifact carrying them is pending the next scheduled weekly grade."
+    },
+    {
+      "id": "nhl_props",
+      "name": "NHL Props",
+      "sport": "hockey",
+      "mac_path": "/Users/colemason/nhl_props",
+      "vm_path": "nhl_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Product contract",
+          "path": "docs/PRODUCT_CONTRACT.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        }
+      ],
+      "timers": [
+        "nhl-props-board-pm.timer",
+        "nhl-props-grade.timer",
+        "nhl-props-watchdog.timer"
+      ],
+      "services": [
+        "nhl-props-board-pm.service",
+        "nhl-props-grade.service",
+        "nhl-props-watchdog.service"
+      ],
+      "run_status": "outputs/run_status.json",
+      "reports": [
+        {
+          "key": "forecast_snapshot",
+          "label": "Latest forecast snapshot",
+          "glob": "outputs/forecast_history/nhl_forecast_*.json",
+          "kind": "nhl_snapshot",
+          "fields": [
+            "board_date",
+            "run_label",
+            "summary"
+          ]
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/ledger/canonical_ledger.jsonl",
+        "label": "Canonical ledger rebuild (grade)"
+      },
+      "slate": {
+        "type": "json_files_dates",
+        "glob": "outputs/forecast_history/nhl_forecast_*.json",
+        "date_field": "board_date",
+        "games_path": "summary.games"
+      },
+      "notes": "Forecast-first cutover 2026-09-25/26. nhl-props-* timers are canonical; legacy sports-nhl-* disabled."
+    },
+    {
+      "id": "soccer_props",
+      "name": "Soccer Props",
+      "sport": "soccer",
+      "mac_path": "/Users/colemason/soccer_props",
+      "vm_path": "soccer_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Handoff",
+          "path": "docs/HANDOFF.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        }
+      ],
+      "timers": [
+        "sports-soccer-forecast-am.timer",
+        "sports-soccer-forecast-grade.timer",
+        "sports-soccer-forecast-weekly.timer"
+      ],
+      "services": [
+        "sports-soccer-forecast-am.service",
+        "sports-soccer-forecast-grade.service",
+        "sports-soccer-forecast-weekly.service"
+      ],
+      "run_status": "outputs/run_status.json",
+      "reports": [
+        {
+          "key": "forecast_snapshot",
+          "label": "Latest forecast snapshot",
+          "glob": "outputs/forecast_history/soccer_forecast_*.json",
+          "kind": "soccer_snapshot",
+          "fields": [
+            "board_date",
+            "run_label",
+            "summary"
+          ]
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/forecast_grades/grade_forecast_*.json",
+        "label": "Forecast grade"
+      },
+      "slate": {
+        "type": "json_files_dates",
+        "glob": "outputs/forecast_history/soccer_forecast_*.json",
+        "date_field": "board_date",
+        "games_path": "summary.fixtures"
+      },
+      "notes": "Research-only. Legacy sports-soccer-board-*/grade timers are disabled; forecast-* are canonical."
+    },
+    {
+      "id": "tennis_props",
+      "name": "Tennis Props",
+      "sport": "tennis",
+      "mac_path": "/Users/colemason/tennis_props",
+      "vm_path": "tennis_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Context shadow",
+          "path": "docs/CONTEXT_SHADOW.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        },
+        {
+          "label": "Handoff",
+          "path": "docs/HANDOFF.md"
+        }
+      ],
+      "timers": [
+        "sports-tennis-daily.timer",
+        "sports-tennis-grade.timer",
+        "sports-tennis-stats-shadow.timer"
+      ],
+      "services": [
+        "sports-tennis-daily.service",
+        "sports-tennis-grade.service",
+        "sports-tennis-stats-shadow.service"
+      ],
+      "run_status": null,
+      "reports": [
+        {
+          "key": "context_shadow",
+          "label": "Context shadow (v2)",
+          "glob": "outputs/grades/context_shadow_latest.json",
+          "kind": "tennis_shadow",
+          "fields": [
+            "forecast_counts",
+            "decision",
+            "graded_at_utc",
+            "by_tour"
+          ]
+        }
+      ],
+      "grade_event": {
+        "glob": "outputs/grades/context_shadow_latest.json",
+        "label": "Context shadow grade"
+      },
+      "slate": null,
+      "notes": "Slate source not yet verified in this phase (board captures are timestamps, not game dates)."
+    },
+    {
+      "id": "ufc_props",
+      "name": "UFC Props",
+      "sport": "mma",
+      "mac_path": "/Users/colemason/ufc_props",
+      "vm_path": "ufc_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Operations",
+          "path": "docs/OPERATIONS.md"
+        },
+        {
+          "label": "Plan",
+          "path": "docs/PLAN.md"
+        }
+      ],
+      "timers": [
+        "sports-ufc-odds-window.timer",
+        "sports-ufc-odds.timer",
+        "sports-ufc-board.timer",
+        "sports-ufc-grade.timer"
+      ],
+      "services": [
+        "sports-ufc-odds-window.service",
+        "sports-ufc-odds.service",
+        "sports-ufc-board.service",
+        "sports-ufc-grade.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": {
+        "glob": "outputs/grades/ledger_v2.jsonl",
+        "label": "Sunday grade ledger"
+      },
+      "slate": null,
+      "notes": "Slate source not yet verified in this phase. Grading ledger is host-local (not committed)."
+    },
+    {
+      "id": "wnba_props",
+      "name": "WNBA Props",
+      "sport": "basketball",
+      "mac_path": "/Users/colemason/Documents/wnba_props",
+      "vm_path": "wnba_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Current handoff",
+          "path": "docs/current_handoff.md"
+        },
+        {
+          "label": "Research roadmap",
+          "path": "docs/research_model_roadmap.md"
+        }
+      ],
+      "timers": [
+        "sports-wnba-forecast@evening.timer",
+        "sports-wnba-forecast-grade.timer"
+      ],
+      "services": [
+        "sports-wnba-forecast@evening.service",
+        "sports-wnba-forecast-grade.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": {
+        "glob": "outputs/grades/forecast_grade_*.json",
+        "label": "Nightly forecast grade"
+      },
+      "slate": null,
+      "notes": "Legacy sports-wnba-daily / shadow timers are disabled. Slate source not yet verified in this phase."
+    },
+    {
+      "id": "golf_props",
+      "name": "Golf Props",
+      "sport": "golf",
+      "mac_path": "/Users/colemason/Documents/golf_props",
+      "vm_path": "golf_props",
+      "timezone": "America/Detroit",
+      "docs": [
+        {
+          "label": "Next check-in",
+          "path": "docs/NEXT_CHECKIN.md"
+        },
+        {
+          "label": "Project handoff",
+          "path": "docs/project_handoff.md"
+        },
+        {
+          "label": "Azure deployment",
+          "path": "docs/azure_deployment.md"
+        }
+      ],
+      "timers": [
+        "sports-golf-forecast.timer",
+        "sports-golf-bovada.timer"
+      ],
+      "services": [
+        "sports-golf-forecast.service",
+        "sports-golf-bovada.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": null,
+      "slate": null,
+      "notes": "Weekly event cadence; slate source not yet verified in this phase."
+    },
+    {
+      "id": "ncaab_stats",
+      "name": "NCAAB Stats",
+      "sport": "basketball",
+      "vm_path": "ncaab_stats",
+      "timezone": "America/Detroit",
+      "docs": [],
+      "timers": [
+        "sports-ncaab-board.timer",
+        "sports-ncaab-board-am.timer",
+        "sports-ncaab-grade.timer"
+      ],
+      "services": [
+        "sports-ncaab-board.service",
+        "sports-ncaab-board-am.service",
+        "sports-ncaab-grade.service"
+      ],
+      "run_status": null,
+      "reports": [],
+      "grade_event": null,
+      "slate": null,
+      "notes": "Mens college basketball. Phase 1 complete 2026-10-19."
+    }
+  ]
+}
