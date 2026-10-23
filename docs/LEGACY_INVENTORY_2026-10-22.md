@@ -108,3 +108,22 @@ affects the live pipeline's output.
   dead paths and stale timer tables are corrected in documentation, and no
   dead file is deleted (deleting a documented manual command is a scope
   decision, not an audit finding).
+
+---
+
+## Retirement executed 2026-10-23
+
+| artifact | reference check | action |
+|---|---|---|
+| `outputs/history/hot_hits_*.json` (3 files, newest 2026-09-10T152041Z) | no reader in repo code; no timer, no cron entry, no systemd unit mentions them | **deleted**. The `outputs/history/` *directory* is kept: the noon pipeline still appends `pitcher_props_*` and `game_markets_*` there (newest 2026-10-22T224501Z), so the directory is live even though these three files were dead. |
+| `outputs/backtests/` | no reader; nothing writes it | **already absent** — 0 files recorded by the audit, directory no longer on the VM. Nothing to remove. |
+| `scripts/start_tmux_scheduler.sh` | untracked; no reference in repo code, `/etc/systemd/system/sports-*`, or `crontab -l` | **deleted** |
+| `scripts/run_daily_tmux_task.sh` | untracked; same check | **deleted** |
+| `scripts/mlb-props-tmux.service` | untracked; not installed in `/etc/systemd/system`; `sports-mlb-*` timer table does not reference tmux | **deleted** |
+| `scripts/migrate_all_sports_to_systemd.sh` | untracked; one-off migration helper, superseded by the live `scripts/install_all_sports_systemd.py`; no reference anywhere | **deleted** |
+
+Checks run on the VM: `git grep` across tracked files, `grep -r` over
+`/etc/systemd/`, `crontab -l`, `/etc/cron.d`, and `grep` over the live
+`install_all_sports_systemd.py` task table. Documentation mentions (this file,
+`README.md`, `docs/CHECK_2026-10-21.md`, `docs/AZURE_VM_OPERATIONS.md`) are prose
+about the leftovers, not live references.
