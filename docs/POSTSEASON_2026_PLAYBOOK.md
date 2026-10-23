@@ -1,5 +1,17 @@
 # 2026 Postseason Playbook — How the Regular Season Is Used
 
+> **LEGACY FIGURES — READ WITH THE ERRATUM.** This playbook quotes the frozen
+> [`SEASON_2026_RECAP.md`](SEASON_2026_RECAP.md), which is **FROZEN/LEGACY, not the
+> current record**. Every unit total it repeats (356-356, -88.27u, -12.6%,
+> `game_ml -24.62`) was computed under the unpriced-loss bug fixed in commit
+> `0c62483` — 7.00u phantom inside the recap window, 10.00u across the season.
+> Corrected window figures: 694 priced, -81.27u, -11.71%, `game_ml -17.62`. The
+> qualitative findings stand; the unit totals do not. Live record:
+> `outputs/grades/forecast_board_<date>.json` -> `canonical`, recomputed by
+> `python3 scripts/audit_season_record.py`; see `docs/INTEGRITY_AUDIT_2026-10-22.md`
+> sections 3 and 7.
+
+
 **Written 2026-09-28.** Companion to [`SEASON_2026_RECAP.md`](SEASON_2026_RECAP.md).
 The recap is the frozen record of what we learned. This file says what we *do*
 with it now that the calendar has turned.

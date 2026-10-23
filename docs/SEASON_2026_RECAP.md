@@ -1,5 +1,28 @@
 # 2026 Regular Season — Frozen Recap and Carry-Forward
 
+> **FROZEN / LEGACY — NOT THE CURRENT RECORD.**
+>
+> This document is a frozen historical decision record (frozen 2026-09-28). It is
+> **not** the live season record and must not be quoted as one. Its headline was
+> computed under the unpriced-loss bug fixed in commit `0c62483`, which booked a
+> phantom -1.00u for every `LOSS` with no recorded price.
+>
+> **Erratum (docs/INTEGRITY_AUDIT_2026-10-22.md, section 7):**
+> - window (09-10 -> 09-27): headline says 712 decided, 356-356, **-88.27u**,
+>   **-12.6%**, 701 priced, `game_ml -24.62`. Seven unpriced `game_ml` losses carry
+>   the phantom stake, so the window is overstated by **7.00u**. Corrected figures:
+>   **694 priced, -81.27u, -11.71%, `game_ml -17.62`**.
+> - season level: the phantom stake is **10.00u** (see the audit, section 4).
+>
+> **Live record (computed, never prose):**
+> - per screen date: `outputs/grades/forecast_board_<date>.json` -> the `canonical`
+>   block (one row per `proposition_id`; `price is not None` is the stake predicate).
+> - whole season: `python3 scripts/audit_season_record.py` (read-only recompute of
+>   every definition) plus `docs/INTEGRITY_AUDIT_2026-10-22.md` section 3.
+>
+> Keep this file for the narrative findings. Take every number from the live record.
+
+
 **Status: FROZEN 2026-09-28.** This file is the durable record of what the
 regular season taught us. It is a decision record, not a research scratchpad.
 
