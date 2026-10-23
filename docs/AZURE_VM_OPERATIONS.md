@@ -24,10 +24,20 @@ ssh -i /Users/colemason/Downloads/RunThemScripts_key.pem azureuser@130.131.0.6
 | --- | --- | --- | --- |
 | `sports-mlb-pipeline-noon.timer` | 12:15 | forecast-pipeline-noon | collect fresh inputs then publish full slate |
 | `sports-mlb-pipeline-afternoon.timer` | 16:45 | forecast-pipeline-afternoon | collect fresh inputs then publish remaining pregame |
+| `sports-mlb-pipeline-evening.timer` | 18:45 | forecast-pipeline-evening | collect fresh inputs, re-check injuries across all games, publish the evening board |
 | `sports-mlb-grade-board.timer` | 06:00 | grade-board | grade prior day, settle ROI ledger, post recap |
+| `sports-mlb-statcast.timer` | 12:00 UTC (= 08:00 ET) | `collect_statcast.py` direct | warm `.cache/statcast/day-<date>.json` for the noon collection |
 
-- Timezones are explicit: `OnCalendar=*-*-* HH:MM:00 America/Detroit` — VM
-  clock itself is UTC; do not "fix" the units to drop the TZ suffix.
+Verified against `systemctl --user list-timers --all` on 2026-10-22. Three
+boards are published per date (12:15 / 16:45 / 18:45 ET).
+
+- Timezones are explicit **except one**: `OnCalendar=*-*-* HH:MM:00 America/Detroit`
+  is the convention (VM clock itself is UTC; do not "fix" the units to drop the
+  TZ suffix), but `sports-mlb-statcast.timer` is `OnCalendar=12:00` with no
+  suffix, so it fires 12:00 **UTC** = 08:00 ET.
+- `Persistent=true` on `sports-mlb-statcast.timer` only; every other timer is
+  `Persistent=false`. Keep it that way — a catch-up run on the boards fires an
+  extra Discord board.
 - All units: user-level, `Type=oneshot`, `TimeoutStartSec=infinity` (the
   runner adds its own 45m/20m `timeout`), `ConditionPathExists` on the runner.
 - `Persistent=false` is intentional: a missed run does not catch up hours
@@ -78,7 +88,7 @@ For current status use `docs/NEXT_CHECKIN.md` and verify timers/artifacts live.
 
 Pre-flight pass (~00:15 ET, 11h before first fire):
 
-- `systemd-analyze --user verify` on all four services + timers: rc=0.
+- `systemd-analyze --user verify` on all five services + timers: rc=0.
 - Calendar math exact: next elapses 15:19/15:37/15:53/20:31 UTC =
   11:19/11:37/11:53/16:31 ET (timezone suffix resolves correctly on systemd 249).
 - Runner secret gate tested safely: env file without the pitcher webhook fails

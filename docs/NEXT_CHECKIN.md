@@ -56,6 +56,12 @@ All times are America/Detroit. Timers are user-level systemd units on Azure:
 | `sports-mlb-grade-board.timer` | 06:00 | Grade the prior date, settle the ledger, post recap, write the learning review |
 | `sports-mlb-pipeline-noon.timer` | 12:15 | Collect fresh inputs and publish the full remaining slate |
 | `sports-mlb-pipeline-afternoon.timer` | 16:45 | Collect fresh inputs and publish the remaining pregame slate |
+| `sports-mlb-pipeline-evening.timer` | 18:45 | Collect fresh inputs, re-check injuries across all games, publish the evening board |
+
+`sports-mlb-statcast.timer` is the fifth unit and the one exception to the
+ET convention above: `OnCalendar=12:00` with no suffix fires 12:00 UTC
+(08:00 ET). Verified live 2026-10-22; see `docs/INTEGRITY_AUDIT_2026-10-22.md`
+for why the timer list drifted from the docs.
 
 The noon board is the early snapshot; the latest valid pregame snapshot is the
 canonical graded play. For markets present in both, the learning review records
